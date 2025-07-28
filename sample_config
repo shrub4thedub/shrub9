@@ -1,23 +1,23 @@
-# Sample shrub9 config - emulates original 9wm behavior
+# shrub9 basic config by shrub
 # Place this file at ~/.config/shrub9/config
 
-# Disable all new features to behave like classic 9wm
+# everything disabled - if you want new features, work for them!
 workspace_count 1
 show_titlebars 0
 rounding 0
 wallpaper_enabled 0
 terminal_launcher_mode 0
 
-# Use classic 9wm colors
+# colours
 active_color black
 inactive_color white
 menu_bg_color #777777
 menu_fg_color black
 
-# Classic 9wm appearance
+# borders
 border_width 4
 inset_width 1
 font fixed
 
-# Keep original terminal
+# terminal
 terminal xterm
