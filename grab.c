@@ -2,12 +2,40 @@
  * Copyright multiple authors, see README for licence details
  */
 #include <stdio.h>
+#include <ctype.h>
 #include <X11/X.h>
 #include <X11/Xos.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/shape.h>
 #include "dat.h"
 #include "fns.h"
+#include "config.h"
+
+static void apply_menu_rounding(Window menuwin, int width, int height);
+static char* prepare_menu_text(const char* original, char* buffer, int buffer_size);
+
+static char*
+prepare_menu_text(const char* original, char* buffer, int buffer_size)
+{
+	int i;
+	
+	if (!original || !buffer || buffer_size <= 0) {
+		return (char*)original;
+	}
+	
+	if (config.lower) {
+		/* Convert to lowercase */
+		for (i = 0; i < buffer_size - 1 && original[i] != '\0'; i++) {
+			buffer[i] = tolower(original[i]);
+		}
+		buffer[i] = '\0';
+		return buffer;
+	} else {
+		/* Return original text */
+		return (char*)original;
+	}
+}
 
 int
 nobuttons(XButtonEvent * e)
@@ -56,8 +84,11 @@ menuhit(XButtonEvent * e, Menu * m)
 	int tx, ty;
 	ScreenInfo *s;
 
-	if (font == 0)
+	if (font == 0) {
+		printf("[MENU DEBUG] ERROR: No font available for menu rendering\n");
 		return -1;
+	}
+	printf("[MENU DEBUG] Menu using font - ascent: %d, descent: %d\n", font->ascent, font->descent);
 	s = getscreen(e->root);
 	if (s == 0 || e->window == s->menuwin)	/* ugly event mangling */
 		return -1;
@@ -104,6 +135,12 @@ menuhit(XButtonEvent * e, Menu * m)
 		setmouse(e->x, e->y, s);
 	XMoveResizeWindow(dpy, s->menuwin, x, y, dx, dy);
 	XSelectInput(dpy, s->menuwin, MenuMask);
+	
+	/* Apply rounding to menu if enabled */
+	if (config.rounding && config.rounding_radius > 0) {
+		apply_menu_rounding(s->menuwin, dx, dy);
+	}
+	
 	XMapRaised(dpy, s->menuwin);
 	status = grab(s->menuwin, None, MenuGrabMask, None, e->time);
 	if (status != GrabSuccess) {
@@ -156,26 +193,77 @@ menuhit(XButtonEvent * e, Menu * m)
 				cur = -1;
 			if (cur == old)
 				break;
-			if (old >= 0 && old < n)
-				XFillRectangle(dpy, s->menuwin, s->gc, 0, old * high, wide, high);
-			if (cur >= 0 && cur < n)
-				XFillRectangle(dpy, s->menuwin, s->gc, 0, cur * high, wide, high);
+			if (old >= 0 && old < n) {
+				/* Redraw old item normally */
+				char *item = m->item[old];
+				char text_buffer[256];
+				char *display_text;
+				int tx, ty;
+				
+				/* Clear the area completely first */
+				XClearArea(dpy, s->menuwin, 0, old * high, wide, high, False);
+				
+				/* Prepare text (with optional lowercase) */
+				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
+				
+				/* Center all text */
+				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
+				ty = old * high + font->ascent + 1;
+				XDrawString(dpy, s->menuwin, s->text_gc, tx, ty, display_text, strlen(display_text));
+			}
+			if (cur >= 0 && cur < n) {
+				/* Draw current item highlighted */
+				char *item = m->item[cur];
+				char text_buffer[256];
+				char *display_text;
+				int tx, ty;
+				
+				/* Fill with blue background */
+				XFillRectangle(dpy, s->menuwin, s->menu_highlight_gc, 0, cur * high, wide, high);
+				
+				/* Prepare text (with optional lowercase) */
+				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
+				
+				/* Center all text */
+				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
+				ty = cur * high + font->ascent + 1;
+				XDrawString(dpy, s->menuwin, s->menu_highlight_text_gc, tx, ty, display_text, strlen(display_text));
+			}
 			break;
 		case Expose:
 			XClearWindow(dpy, s->menuwin);
 			for (i = 0; i < n; i++) {
 				char *item = m->item[i];
-
-				if (i < 5) {
-					tx = (wide - XTextWidth(font, item, strlen(item))) / 2;
-				} else {
-					tx = 1;
-				}
+				char text_buffer[256];
+				char *display_text;
+				
+				/* Prepare text (with optional lowercase) */
+				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
+				
+				/* Center all text */
+				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = i * high + font->ascent + 1;
-				XDrawString(dpy, s->menuwin, s->gc, tx, ty, item, strlen(item));
+				printf("[MENU DEBUG] Drawing item %d: '%s' at (%d,%d) using GC %p\n", 
+				       i, display_text, tx, ty, (void*)s->text_gc);
+				XDrawString(dpy, s->menuwin, s->text_gc, tx, ty, display_text, strlen(display_text));
 			}
-			if (cur >= 0 && cur < n)
-				XFillRectangle(dpy, s->menuwin, s->gc, 0, cur * high, wide, high);
+			if (cur >= 0 && cur < n) {
+				/* Draw highlighted item */
+				char *item = m->item[cur];
+				char text_buffer[256];
+				char *display_text;
+				
+				/* Fill with blue background */
+				XFillRectangle(dpy, s->menuwin, s->menu_highlight_gc, 0, cur * high, wide, high);
+				
+				/* Prepare text (with optional lowercase) */
+				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
+				
+				/* Center all text */
+				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
+				ty = cur * high + font->ascent + 1;
+				XDrawString(dpy, s->menuwin, s->menu_highlight_text_gc, tx, ty, display_text, strlen(display_text));
+			}
 			drawn = 1;
 		}
 	}
@@ -445,4 +533,160 @@ void
 setmouse(int x, int y, ScreenInfo * s)
 {
 	XWarpPointer(dpy, None, s->root, None, None, None, None, x, y);
+}
+
+int
+sweep_area(ScreenInfo * s, int *x, int *y, int *width, int *height)
+{
+	XEvent ev;
+	int status;
+	XButtonEvent *e;
+	int x1, y1, x2, y2;
+	int pressed = 0;
+	int last_x2 = -1, last_y2 = -1;
+
+	status = grab(s->root, s->root, ButtonMask | PointerMotionMask, s->sweep0, 0);
+	if (status != GrabSuccess) {
+		graberror("sweep_area", status);
+		return 0;
+	}
+
+	XGrabServer(dpy);
+
+	for (;;) {
+		XMaskEvent(dpy, ButtonMask | PointerMotionMask, &ev);
+		e = &ev.xbutton;
+		
+		switch (ev.type) {
+		case ButtonPress:
+			if (e->button != Button3) {
+				XUngrabServer(dpy);
+				ungrab(e);
+				return 0;
+			}
+			x1 = e->x;
+			y1 = e->y;
+			pressed = 1;
+			XChangeActivePointerGrab(dpy, ButtonMask | PointerMotionMask, s->boxcurs, e->time);
+			break;
+			
+		case MotionNotify:
+			if (!pressed)
+				break;
+			
+			/* Erase previous box */
+			if (last_x2 != -1) {
+				int dx = last_x2 - x1;
+				int dy = last_y2 - y1;
+				int rx = x1, ry = y1;
+				if (dx < 0) { rx = last_x2; dx = -dx; }
+				if (dy < 0) { ry = last_y2; dy = -dy; }
+				if (dx > 0 && dy > 0) {
+					XDrawRectangle(dpy, s->root, s->gc, rx, ry, dx, dy);
+				}
+			}
+			
+			/* Draw new box */
+			x2 = ev.xmotion.x;
+			y2 = ev.xmotion.y;
+			{
+				int dx = x2 - x1;
+				int dy = y2 - y1;
+				int rx = x1, ry = y1;
+				if (dx < 0) { rx = x2; dx = -dx; }
+				if (dy < 0) { ry = y2; dy = -dy; }
+				if (dx > 0 && dy > 0) {
+					XDrawRectangle(dpy, s->root, s->gc, rx, ry, dx, dy);
+				}
+			}
+			last_x2 = x2;
+			last_y2 = y2;
+			XFlush(dpy);
+			break;
+			
+		case ButtonRelease:
+			if (!pressed || e->button != Button3) {
+				XUngrabServer(dpy);
+				ungrab(e);
+				return 0;
+			}
+			
+			/* Erase final box */
+			if (last_x2 != -1) {
+				int dx = last_x2 - x1;
+				int dy = last_y2 - y1;
+				int rx = x1, ry = y1;
+				if (dx < 0) { rx = last_x2; dx = -dx; }
+				if (dy < 0) { ry = last_y2; dy = -dy; }
+				if (dx > 0 && dy > 0) {
+					XDrawRectangle(dpy, s->root, s->gc, rx, ry, dx, dy);
+				}
+			}
+			
+			x2 = e->x;
+			y2 = e->y;
+			XUngrabServer(dpy);
+			ungrab(e);
+			
+			if (x1 > x2) { int tmp = x1; x1 = x2; x2 = tmp; }
+			if (y1 > y2) { int tmp = y1; y1 = y2; y2 = tmp; }
+			
+			*x = x1;
+			*y = y1;
+			*width = x2 - x1;
+			*height = y2 - y1;
+			
+			if (*width < 50 || *height < 50)
+				return 0;
+				
+			return 1;
+		}
+	}
+}
+
+static void
+apply_menu_rounding(Window menuwin, int width, int height)
+{
+#ifdef SHAPE
+	Pixmap mask;
+	GC mask_gc;
+	int radius = config.rounding_radius;
+	
+	/* Don't round if radius is too big for the menu */
+	if (radius * 2 > width || radius * 2 > height || radius <= 0) {
+		return;
+	}
+	
+	/* Create a pixmap for the mask */
+	mask = XCreatePixmap(dpy, menuwin, width, height, 1);
+	mask_gc = XCreateGC(dpy, mask, 0, NULL);
+	
+	/* Clear the mask (make it transparent) */
+	XSetForeground(dpy, mask_gc, 0);
+	XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
+	
+	/* Draw the rounded rectangle shape (make it opaque) */
+	XSetForeground(dpy, mask_gc, 1);
+	
+	/* Draw rounded rectangle */
+	XFillRectangle(dpy, mask, mask_gc, radius, 0, width - 2 * radius, height);
+	XFillRectangle(dpy, mask, mask_gc, 0, radius, width, height - 2 * radius);
+	
+	/* Draw quarter circles for each corner */
+	/* Top-left corner */
+	XFillArc(dpy, mask, mask_gc, 0, 0, radius * 2, radius * 2, 90 * 64, 90 * 64);
+	/* Top-right corner */
+	XFillArc(dpy, mask, mask_gc, width - radius * 2, 0, radius * 2, radius * 2, 0 * 64, 90 * 64);
+	/* Bottom-left corner */
+	XFillArc(dpy, mask, mask_gc, 0, height - radius * 2, radius * 2, radius * 2, 180 * 64, 90 * 64);
+	/* Bottom-right corner */
+	XFillArc(dpy, mask, mask_gc, width - radius * 2, height - radius * 2, radius * 2, radius * 2, 270 * 64, 90 * 64);
+	
+	/* Apply the mask to the menu window */
+	XShapeCombineMask(dpy, menuwin, ShapeBounding, 0, 0, mask, ShapeSet);
+	
+	/* Clean up */
+	XFreeGC(dpy, mask_gc);
+	XFreePixmap(dpy, mask);
+#endif
 }

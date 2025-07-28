@@ -11,6 +11,14 @@
 #include <X11/extensions/shape.h>
 #include "dat.h"
 #include "fns.h"
+#include "workspace.h"
+#include "config.h"
+
+static void apply_rounded_shape(Client *c);
+
+static void check_terminal_launch(Client *c);
+static Client* find_candidate_terminal(Client *new_client);
+void restore_terminal_from_child(Client *child);
 
 int
 manage(Client * c, int mapped)
@@ -19,6 +27,10 @@ manage(Client * c, int mapped)
 	long msize;
 	XClassHint class;
 	XWMHints *hints;
+
+	fprintf(stderr, "manage: ENTRY - managing client %p (window=0x%lx) mapped=%d\n", 
+		(void*)c, c->window, mapped);
+	fprintf(stderr, "manage: client workspace at entry = %d\n", c->workspace);
 
 	trace("manage", c, 0);
 	XSelectInput(dpy, c->window, ColormapChangeMask | EnterWindowMask | PropertyChangeMask | FocusChangeMask);
@@ -30,6 +42,11 @@ manage(Client * c, int mapped)
 	if (XGetClassHint(dpy, c->window, &class) != 0) {	/* ``Success'' */
 		c->instance = class.res_name;
 		c->class = class.res_class;
+		
+		/* Check if this is a terminal */
+		if (c->class && is_terminal_class(c->class)) {
+			c->is_terminal = 1;
+		}
 	} else {
 		c->instance = 0;
 		c->class = 0;
@@ -111,16 +128,31 @@ manage(Client * c, int mapped)
 	}
 	gravitate(c, 0);
 
-	c->parent = XCreateSimpleWindow(dpy, c->screen->root,
-					c->x - BORDER, c->y - BORDER,
-					c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1), 1, c->screen->black, c->screen->white);
+	{
+		int titlebar_offset = config.show_titlebars ? config.titlebar_height : 0;
+		int parent_height = c->dy + 2 * (BORDER - 1) + titlebar_offset;
+		
+		c->parent = XCreateSimpleWindow(dpy, c->screen->root,
+						c->x - BORDER, c->y - BORDER,
+						c->dx + 2 * (BORDER - 1), parent_height, 1, c->screen->black, c->screen->white);
+	}
 	XSelectInput(dpy, c->parent, SubstructureRedirectMask | SubstructureNotifyMask);
 	if (mapped)
 		c->reparenting = 1;
 	if (doreshape && !fixsize)
 		XResizeWindow(dpy, c->window, c->dx, c->dy);
 	XSetWindowBorderWidth(dpy, c->window, 0);
-	XReparentWindow(dpy, c->window, c->parent, BORDER - 1, BORDER - 1);
+	
+	{
+		int window_y = config.show_titlebars ? BORDER - 1 + config.titlebar_height : BORDER - 1;
+		XReparentWindow(dpy, c->window, c->parent, BORDER - 1, window_y);
+	}
+	
+	/* Apply rounded corners if enabled */
+	if (config.rounding && config.rounding_radius > 0) {
+		apply_rounded_shape(c);
+	}
+	
 #ifdef	SHAPE
 	if (shape) {
 		XShapeSelectInput(dpy, c->window, ShapeNotifyMask);
@@ -130,9 +162,23 @@ manage(Client * c, int mapped)
 	}
 #endif
 	XAddToSaveSet(dpy, c->window);
+	
+	/* Create titlebar if enabled */
+	if (config.show_titlebars) {
+		create_titlebar(c);
+	}
+	
+	/* Add client to current workspace BEFORE visibility operations */
+	fprintf(stderr, "manage: adding new client %p (window=0x%lx) to current workspace %d\n", 
+		(void*)c, c->window, workspace_get_current());
+	workspace_add_client(c, workspace_get_current());
+	
 	if (dohide)
 		hide(c);
-	else {
+	else if (auto_reshape_next) {
+		/* Don't map the window yet - we'll map it after reshape */
+		setwstate(c, NormalState);
+	} else {
 		XMapWindow(dpy, c->window);
 		XMapWindow(dpy, c->parent);
 		if (doreshape)
@@ -142,10 +188,50 @@ manage(Client * c, int mapped)
 		else
 			setactive(c, 0);
 		setwstate(c, NormalState);
+		
+		/* Check if window was added to non-current workspace and hide it */
+		if (c->workspace != workspace_get_current()) {
+			fprintf(stderr, "manage: unmapping window that was added to non-current workspace %d (current=%d)\n", 
+				c->workspace, workspace_get_current());
+			XUnmapWindow(dpy, c->parent);
+			XUnmapWindow(dpy, c->window);
+		} else {
+			fprintf(stderr, "manage: window remains mapped in current workspace\n");
+		}
 	}
 	if (current && (current != c))
 		cmapfocus(current);
 	c->init = 1;
+	
+	fprintf(stderr, "manage: FINAL - client %p has workspace=%d\n", (void*)c, c->workspace);
+	
+	/* Handle terminal-launcher relationships */
+	if (config.terminal_launcher_mode && !c->is_terminal) {
+		/* This is a non-terminal window - check if it was launched from a terminal */
+		check_terminal_launch(c);
+	}
+	
+	/* Check if we should auto-reshape this window (for interactive terminal spawn) */
+	if (auto_reshape_next && !dohide) {
+		auto_reshape_next = 0;  /* Reset the flag */
+		/* Give the window a moment to be ready */
+		XFlush(dpy);
+		/* Trigger reshape operation without activating */
+		if (reshape_ex(c, 0)) {
+			/* Reshape succeeded - now map the window */
+			XMapWindow(dpy, c->window);
+			XMapRaised(dpy, c->parent);
+			active(c);
+			top(c);
+		} else {
+			/* Reshape was cancelled - map at original size */
+			XMapWindow(dpy, c->window);
+			XMapWindow(dpy, c->parent);
+			setactive(c, 0);
+		}
+	}
+	
+	
 	return 1;
 }
 
@@ -193,6 +279,26 @@ gettrans(Client * c)
 void
 withdraw(Client * c)
 {
+	/* Check if we're in the middle of workspace switching */
+	if (workspace_switching && pending_workspace_unmaps > 0) {
+		fprintf(stderr, "withdraw: SKIPPING entire withdrawal - workspace switching in progress for client %p (pending=%d)\n", (void*)c, pending_workspace_unmaps);
+		/* Decrement pending counter as we're processing a workspace switch unmap */
+		pending_workspace_unmaps--;
+		fprintf(stderr, "withdraw: decremented pending unmaps to %d\n", pending_workspace_unmaps);
+		
+		/* If this was the last pending unmap, clear the workspace switching flag */
+		if (pending_workspace_unmaps == 0) {
+			workspace_switching = 0;
+			fprintf(stderr, "withdraw: all workspace switch unmaps processed, clearing workspace_switching flag\n");
+		}
+		/* During workspace switching, windows are already unmapped by workspace_hide_all_clients
+		   Don't do any withdrawal operations - just return */
+		return;
+	}
+	
+	fprintf(stderr, "withdraw: removing client %p from workspace (actual withdrawal)\n", (void*)c);
+	workspace_remove_client(c);
+	
 	XUnmapWindow(dpy, c->parent);
 	gravitate(c, 1);
 	XReparentWindow(dpy, c->window, c->screen->root, c->x, c->y);
@@ -488,4 +594,181 @@ getproto(Client * c)
 			c->proto |= Ptakefocus;
 
 	XFree((char *) p);
+}
+
+static Client*
+find_candidate_terminal(Client *new_client)
+{
+	Client *c;
+	Client *best_candidate = NULL;
+	
+	/* Look for terminals in the same workspace that don't already have children */
+	for (c = clients; c; c = c->next) {
+		if (c->is_terminal && 
+		    c->launched_child == NULL && 
+		    c->workspace == new_client->workspace &&
+		    normal(c)) {
+			/* Prefer the current terminal if it exists */
+			if (c == current) {
+				best_candidate = c;
+				break;
+			}
+			/* Otherwise, take the first suitable terminal */
+			if (best_candidate == NULL) {
+				best_candidate = c;
+			}
+		}
+	}
+	
+	return best_candidate;
+}
+
+static void
+check_terminal_launch(Client *c)
+{
+	Client *terminal;
+	
+	/* Don't process terminals or transient windows */
+	if (c->is_terminal || c->trans != None)
+		return;
+		
+	terminal = find_candidate_terminal(c);
+	if (terminal != NULL) {
+		/* Establish the relationship */
+		c->terminal_parent = terminal;
+		terminal->launched_child = c;
+		
+		/* Save terminal's current geometry */
+		terminal->saved_x = terminal->x;
+		terminal->saved_y = terminal->y;
+		terminal->saved_dx = terminal->dx;
+		terminal->saved_dy = terminal->dy;
+		
+		/* Apply terminal's geometry to the new window */
+		c->x = terminal->x;
+		c->y = terminal->y;
+		c->dx = terminal->dx;
+		c->dy = terminal->dy;
+		
+		/* Hide the terminal */
+		XUnmapWindow(dpy, terminal->parent);
+		XUnmapWindow(dpy, terminal->window);
+		terminal->state = IconicState;
+		
+		/* Make sure the new window appears at the right size */
+		XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER, 
+		                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+		XMoveResizeWindow(dpy, c->window, BORDER - 1, 
+		                  config.show_titlebars ? BORDER - 1 + config.titlebar_height : BORDER - 1, 
+		                  c->dx, c->dy);
+	}
+}
+
+void
+restore_terminal_from_child(Client *child)
+{
+	Client *terminal;
+	
+	terminal = child->terminal_parent;
+	if (!terminal)
+		return;
+		
+	/* Update terminal geometry to match the child's final position/size */
+	terminal->x = child->x;
+	terminal->y = child->y;
+	terminal->dx = child->dx;
+	terminal->dy = child->dy;
+	
+	/* Clear the relationship */
+	terminal->launched_child = NULL;
+	child->terminal_parent = NULL;
+	
+	/* Restore the terminal */
+	terminal->state = NormalState;
+	
+	/* Update terminal's parent window geometry */
+	XMoveResizeWindow(dpy, terminal->parent, terminal->x - BORDER, terminal->y - BORDER,
+	                  terminal->dx + 2 * (BORDER - 1), terminal->dy + 2 * (BORDER - 1));
+	
+	/* Update terminal window position within parent */
+	XMoveResizeWindow(dpy, terminal->window, BORDER - 1,
+	                  config.show_titlebars ? BORDER - 1 + config.titlebar_height : BORDER - 1,
+	                  terminal->dx, terminal->dy);
+	
+	/* Show the terminal */
+	XMapWindow(dpy, terminal->window);
+	XMapRaised(dpy, terminal->parent);
+	
+	/* Make it active */
+	active(terminal);
+	top(terminal);
+}
+
+static void
+apply_rounded_shape(Client *c)
+{
+#ifdef SHAPE
+	Pixmap mask;
+	GC mask_gc;
+	int width, height;
+	int radius = config.rounding_radius;
+	
+	if (!c || c->parent == None || c->window == None) {
+		return; /* Safety check */
+	}
+	
+	width = c->dx + 2 * (BORDER - 1);
+	height = c->dy + 2 * (BORDER - 1);
+	if (config.show_titlebars) {
+		height += config.titlebar_height;
+	}
+	
+	/* Create a pixmap for the mask */
+	mask = XCreatePixmap(dpy, c->parent, width, height, 1);
+	mask_gc = XCreateGC(dpy, mask, 0, NULL);
+	
+	/* Clear the mask (make it transparent) */
+	XSetForeground(dpy, mask_gc, 0);
+	XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
+	
+	/* Draw the rounded rectangle shape (make it opaque) */
+	XSetForeground(dpy, mask_gc, 1);
+	
+	if (radius * 2 > width || radius * 2 > height || radius <= 0) {
+		/* Fallback to regular rectangle if radius is too big */
+		XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
+	} else {
+		/* Draw rounded rectangle */
+		XFillRectangle(dpy, mask, mask_gc, radius, 0, width - 2 * radius, height);
+		XFillRectangle(dpy, mask, mask_gc, 0, radius, width, height - 2 * radius);
+		
+		/* Draw quarter circles for each corner */
+		/* Top-left corner */
+		XFillArc(dpy, mask, mask_gc, 0, 0, radius * 2, radius * 2, 90 * 64, 90 * 64);
+		/* Top-right corner */
+		XFillArc(dpy, mask, mask_gc, width - radius * 2, 0, radius * 2, radius * 2, 0 * 64, 90 * 64);
+		/* Bottom-left corner */
+		XFillArc(dpy, mask, mask_gc, 0, height - radius * 2, radius * 2, radius * 2, 180 * 64, 90 * 64);
+		/* Bottom-right corner */
+		XFillArc(dpy, mask, mask_gc, width - radius * 2, height - radius * 2, radius * 2, radius * 2, 270 * 64, 90 * 64);
+	}
+	
+	/* Apply the mask to the window */
+	XShapeCombineMask(dpy, c->parent, ShapeBounding, 0, 0, mask, ShapeSet);
+	
+	/* Clean up */
+	XFreeGC(dpy, mask_gc);
+	XFreePixmap(dpy, mask);
+#endif
+}
+
+void
+apply_window_rounding(Client *c)
+{
+	if (!c || c->parent == None || c->window == None) {
+		return; /* Safety check - don't apply rounding to destroyed clients */
+	}
+	if (config.rounding && config.rounding_radius > 0) {
+		apply_rounded_shape(c);
+	}
 }

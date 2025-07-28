@@ -6,19 +6,23 @@ BIN = $(DESTDIR)$(PREFIX)/bin
 MANDIR = $(DESTDIR)$(PREFIX)/share/man/man1
 MANSUFFIX = 1
 
-all: 9wm
+OBJS = 9wm.o event.o manage.o menu.o client.o grab.o cursor.o error.o config.o workspace.o spaces.o
+HFILES = dat.h fns.h config.h workspace.h spaces.h
 
-9wm: 9wm.o event.o manage.o menu.o client.o grab.o cursor.o error.o
+all: shrub9
 
-install: 9wm
+shrub9: $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+install: shrub9
 	mkdir -p $(BIN)
-	cp 9wm $(BIN)/9wm
+	cp shrub9 $(BIN)/shrub9
 
 install.man:
 	mkdir -p $(MANDIR)
-	cp 9wm.man $(MANDIR)/9wm.$(MANSUFFIX)
+	cp 9wm.man $(MANDIR)/shrub9.$(MANSUFFIX)
 
 $(OBJS): $(HFILES)
 
 clean:
-	rm -f 9wm *.o
+	rm -f shrub9 9wm *.o

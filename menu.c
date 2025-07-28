@@ -1,10 +1,12 @@
 /*
  * Copyright multiple authors, see README for licence details
  */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/X.h>
@@ -12,23 +14,45 @@
 #include <X11/Xutil.h>
 #include "dat.h"
 #include "fns.h"
+#include "config.h"
+#include "spaces.h"
 
 Client *hiddenc[MAXHIDDEN];
 
 int numhidden;
 
-char *b3items[B3FIXED + MAXHIDDEN + 1] = {
-	"New",
-	"Reshape",
-	"Move",
-	"Delete",
-	"Hide",
-	0,
-};
+char *b3items[CONFIG_MAX_MENU_ITEMS + MAXHIDDEN + 1];
 
 Menu b3menu = {
 	b3items,
 };
+
+void
+rebuild_menu(void)
+{
+	int i;
+	
+	/* Clear menu */
+	for (i = 0; i < CONFIG_MAX_MENU_ITEMS + MAXHIDDEN + 1; i++)
+		b3items[i] = NULL;
+	
+	/* Add configured menu items */
+	for (i = 0; i < config.menu_count && i < CONFIG_MAX_MENU_ITEMS; i++) {
+		if (config.menu_items[i].label[0] != '\0') {
+			b3items[i] = config.menu_items[i].label;
+		}
+	}
+	
+	/* Add hidden windows after configured items */
+	for (i = 0; i < numhidden && i < MAXHIDDEN; i++) {
+		if (hiddenc[i] && hiddenc[i]->label) {
+			b3items[config.menu_count + i] = hiddenc[i]->label;
+		}
+	}
+	
+	/* Null terminate */
+	b3items[config.menu_count + numhidden] = NULL;
+}
 
 Menu egg = {
 	version,
@@ -46,8 +70,24 @@ button(XButtonEvent * e)
 	s = getscreen(e->root);
 	if (s == 0)
 		return;
+	
+	/* Handle spaces overlay clicks */
+	if (spaces_mode) {
+		if (e->window == spaces_view.overlay) {
+			spaces_handle_button(e);
+			return;
+		} else {
+			/* Safety check: if spaces_mode is on but event is not for overlay, 
+			   something is wrong - reset spaces mode */
+			spaces_mode = 0;
+			spaces_view.active = 0;
+		}
+	}
 	c = getclient(e->window, 0);
 	if (c) {
+		/* Ignore clicks on titlebars for now */
+		if (c->titlebar == e->window)
+			return;
 		e->x += c->x - BORDER + 1;
 		e->y += c->y - BORDER + 1;
 	} else if (e->window != e->root)
@@ -75,28 +115,40 @@ button(XButtonEvent * e)
 
 	if (current && current->screen == s)
 		cmapnofocus(s);
+	
+	rebuild_menu();
 	switch (n = menuhit(e, &b3menu)) {
-	case 0:		/* New */
-		spawn(s, termprog);
-		break;
-	case 1:		/* Reshape */
-		reshape(selectwin(1, 0, s));
-		break;
-	case 2:		/* Move */
-		move(selectwin(0, 0, s));
-		break;
-	case 3:		/* Delete */
-		shift = 0;
-		c = selectwin(1, &shift, s);
-		delete(c, shift);
-		break;
-	case 4:		/* Hide */
-		hide(selectwin(1, 0, s));
-		break;
-	default:		/* unhide window */
-		unhide(n - B3FIXED, 1);
-		break;
 	case -1:		/* nothing */
+		break;
+	default:
+		if (n < config.menu_count) {
+			const char *cmd = config_get_menu_command(n);
+			if (cmd) {
+				if (strcmp(cmd, "terminal") == 0) {
+					spawn_terminal_interactive(s);
+				} else if (strcmp(cmd, "reshape") == 0) {
+					(void)reshape(selectwin(1, 0, s));
+				} else if (strcmp(cmd, "move") == 0) {
+					move(selectwin(0, 0, s));
+				} else if (strcmp(cmd, "delete") == 0) {
+					shift = 0;
+					c = selectwin(1, &shift, s);
+					delete(c, shift);
+				} else if (strcmp(cmd, "hide") == 0) {
+					hide(selectwin(1, 0, s));
+				} else if (strcmp(cmd, "tile") == 0) {
+					tile_windows(s);
+				} else if (strcmp(cmd, "spaces") == 0) {
+					spaces_show(s);
+				} else {
+					/* Custom command */
+					spawn(s, (char*)cmd);
+				}
+			}
+		} else {
+			/* unhide window - adjust for new menu system */
+			unhide(n - config.menu_count, 1);
+		}
 		break;
 	}
 	if (current && current->screen == s)
@@ -124,25 +176,94 @@ spawn(ScreenInfo * s, char *prog)
 }
 
 void
-reshape(c)
-     Client *c;
+spawn_sized(ScreenInfo * s, char *prog)
+{
+	int x, y, width, height;
+	char geometry[64];
+	char command[512];
+	
+	if (sweep_area(s, &x, &y, &width, &height) == 0)
+		return;
+	
+	snprintf(geometry, sizeof(geometry), "%dx%d+%d+%d", 
+		width / 8, height / 16, x, y);
+	
+	if (fork() == 0) {
+		close(ConnectionNumber(dpy));
+		if (s->display[0] != '\0') {
+			putenv(s->display);
+		}
+
+		if (prog != NULL) {
+			snprintf(command, sizeof(command), "%s -geometry %s", prog, geometry);
+			execl(shell, shell, "-c", command, NULL);
+			fprintf(stderr, "9wm: exec %s", shell);
+			perror(" failed");
+		}
+		snprintf(command, sizeof(command), "%s -geometry %s", config.terminal, geometry);
+		execl(shell, shell, "-c", command, NULL);
+		perror("9wm: exec terminal failed");
+		exit(1);
+	}
+}
+
+void
+spawn_terminal_interactive(ScreenInfo * s)
+{
+	pid_t pid;
+	
+	/* Fork and spawn terminal */
+	pid = fork();
+	if (pid == 0) {
+		close(ConnectionNumber(dpy));
+		if (s->display[0] != '\0') {
+			putenv(s->display);
+		}
+
+		if (termprog != NULL) {
+			execl(shell, shell, "-c", termprog, NULL);
+			fprintf(stderr, "9wm: exec %s", shell);
+			perror(" failed");
+		}
+		/* Fallback to config terminal */
+		execl(shell, shell, "-c", config.terminal, NULL);
+		perror("9wm: exec terminal failed");
+		exit(1);
+	}
+	
+	/* Set a flag so we know to auto-reshape the next new window */
+	auto_reshape_next = 1;
+}
+
+int
+reshape_ex(Client *c, int activate)
 {
 	int odx, ody;
 
 	if (c == 0)
-		return;
+		return 0;
 	odx = c->dx;
 	ody = c->dy;
 	if (sweep(c) == 0)
-		return;
-	active(c);
-	top(c);
-	XRaiseWindow(dpy, c->parent);
+		return 0;
+	if (activate) {
+		active(c);
+		top(c);
+		XRaiseWindow(dpy, c->parent);
+	}
 	XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER, c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
 	if (c->dx == odx && c->dy == ody)
 		sendconfig(c);
 	else
 		XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+	return 1;
+}
+
+int
+reshape(c)
+     Client *c;
+{
+	return reshape_ex(c, 1);
 }
 
 void
@@ -191,10 +312,8 @@ hide(Client * c)
 
 	for (i = numhidden; i > 0; i -= 1) {
 		hiddenc[i] = hiddenc[i - 1];
-		b3items[B3FIXED + i] = b3items[B3FIXED + i - 1];
 	}
 	hiddenc[0] = c;
-	b3items[B3FIXED] = c->label;
 	numhidden++;
 }
 
@@ -225,9 +344,7 @@ unhide(int n, int map)
 	numhidden--;
 	for (i = n; i < numhidden; i++) {
 		hiddenc[i] = hiddenc[i + 1];
-		b3items[B3FIXED + i] = b3items[B3FIXED + i + 1];
 	}
-	b3items[B3FIXED + numhidden] = 0;
 }
 
 void
@@ -243,6 +360,194 @@ unhidec(c, map)
 			return;
 		}
 	fprintf(stderr, "9wm: unhidec: not hidden: %s(0x%x)\n", c->label, (int) c->window);
+}
+
+void
+tile_windows(ScreenInfo *s)
+{
+	Client *c;
+	Client **visible_clients;
+	int num_visible = 0;
+	int i;
+	int screen_width, screen_height;
+	int master_width, slave_width;
+	int master_height, slave_height;
+	int master_x, master_y;
+	int slave_x, slave_y;
+	int current_workspace;
+	
+	if (!s) return;
+	
+	/* Get current workspace */
+	current_workspace = workspace_get_current();
+	
+	/* Count visible clients in current workspace */
+	for (c = clients; c; c = c->next) {
+		if (!hidden(c) && !withdrawn(c) && c->screen == s && c->workspace == current_workspace) {
+			num_visible++;
+		}
+	}
+	
+	if (num_visible == 0) return;
+	
+	/* Allocate array for visible clients */
+	visible_clients = malloc(num_visible * sizeof(Client*));
+	if (!visible_clients) return;
+	
+	/* Collect visible clients */
+	i = 0;
+	for (c = clients; c; c = c->next) {
+		if (!hidden(c) && !withdrawn(c) && c->screen == s && c->workspace == current_workspace) {
+			visible_clients[i++] = c;
+		}
+	}
+	
+	/* Get screen dimensions */
+	screen_width = DisplayWidth(dpy, s->num);
+	screen_height = DisplayHeight(dpy, s->num);
+	
+	if (num_visible == 1) {
+		/* Single window - full screen */
+		c = visible_clients[0];
+		c->x = 0;
+		c->y = 0;
+		c->dx = screen_width;
+		c->dy = screen_height;
+		
+		XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER, 
+		                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+		XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+		sendconfig(c);
+		
+	} else if (num_visible == 2) {
+		/* Two windows - side by side, focused window gets more space */
+		master_width = (int)(screen_width * 0.6);  /* 60% for focused window */
+		slave_width = screen_width - master_width;
+		master_height = slave_height = screen_height;
+		master_x = 0;
+		master_y = 0;
+		slave_x = master_width;
+		slave_y = 0;
+		
+		/* Put current/focused window as master */
+		if (current && current->workspace == current_workspace) {
+			/* Current window gets master position */
+			current->x = master_x;
+			current->y = master_y;
+			current->dx = master_width;
+			current->dy = master_height;
+			
+			XMoveResizeWindow(dpy, current->parent, current->x - BORDER, current->y - BORDER,
+			                  current->dx + 2 * (BORDER - 1), current->dy + 2 * (BORDER - 1));
+			XMoveResizeWindow(dpy, current->window, BORDER - 1, BORDER - 1, current->dx, current->dy);
+			sendconfig(current);
+			
+			/* Other window gets slave position */
+			for (i = 0; i < num_visible; i++) {
+				if (visible_clients[i] != current) {
+					c = visible_clients[i];
+					c->x = slave_x;
+					c->y = slave_y;
+					c->dx = slave_width;
+					c->dy = slave_height;
+					
+					XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER,
+					                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+					XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+					sendconfig(c);
+					break;
+				}
+			}
+		} else {
+			/* No current window, just split evenly */
+			master_width = screen_width / 2;
+			slave_width = screen_width - master_width;
+			
+			for (i = 0; i < num_visible && i < 2; i++) {
+				c = visible_clients[i];
+				c->x = (i == 0) ? 0 : master_width;
+				c->y = 0;
+				c->dx = (i == 0) ? master_width : slave_width;
+				c->dy = screen_height;
+				
+				XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER,
+				                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+				XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+				sendconfig(c);
+			}
+		}
+		
+	} else {
+		/* Multiple windows - master/stack layout */
+		master_width = (int)(screen_width * 0.5);  /* 50% for master */
+		slave_width = screen_width - master_width;
+		master_height = screen_height;
+		slave_height = screen_height / (num_visible - 1);
+		
+		master_x = 0;
+		master_y = 0;
+		slave_x = master_width;
+		slave_y = 0;
+		
+		/* Put current/focused window as master if it exists */
+		if (current && current->workspace == current_workspace) {
+			current->x = master_x;
+			current->y = master_y;
+			current->dx = master_width;
+			current->dy = master_height;
+			
+			XMoveResizeWindow(dpy, current->parent, current->x - BORDER, current->y - BORDER,
+			                  current->dx + 2 * (BORDER - 1), current->dy + 2 * (BORDER - 1));
+			XMoveResizeWindow(dpy, current->window, BORDER - 1, BORDER - 1, current->dx, current->dy);
+			sendconfig(current);
+			
+			/* Stack other windows vertically */
+			i = 0;
+			for (c = clients; c; c = c->next) {
+				if (!hidden(c) && !withdrawn(c) && c->screen == s && 
+				    c->workspace == current_workspace && c != current) {
+					c->x = slave_x;
+					c->y = slave_y + (i * slave_height);
+					c->dx = slave_width;
+					c->dy = slave_height;
+					
+					XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER,
+					                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+					XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+					sendconfig(c);
+					i++;
+				}
+			}
+		} else {
+			/* No current window, treat first as master */
+			visible_clients[0]->x = master_x;
+			visible_clients[0]->y = master_y;
+			visible_clients[0]->dx = master_width;
+			visible_clients[0]->dy = master_height;
+			
+			c = visible_clients[0];
+			XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER,
+			                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+			XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+			sendconfig(c);
+			
+			/* Stack remaining windows */
+			for (i = 1; i < num_visible; i++) {
+				c = visible_clients[i];
+				c->x = slave_x;
+				c->y = slave_y + ((i - 1) * slave_height);
+				c->dx = slave_width;
+				c->dy = slave_height;
+				
+				XMoveResizeWindow(dpy, c->parent, c->x - BORDER, c->y - BORDER,
+				                  c->dx + 2 * (BORDER - 1), c->dy + 2 * (BORDER - 1));
+				XMoveResizeWindow(dpy, c->window, BORDER - 1, BORDER - 1, c->dx, c->dy);
+				sendconfig(c);
+			}
+		}
+	}
+	
+	free(visible_clients);
 }
 
 void

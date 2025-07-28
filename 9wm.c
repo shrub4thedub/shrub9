@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <pwd.h>
+#include <unistd.h>
 #include <X11/X.h>
 #include <X11/Xos.h>
 #include <X11/Xlib.h>
@@ -14,9 +16,12 @@
 #include <X11/extensions/shape.h>
 #include "dat.h"
 #include "fns.h"
+#include "config.h"
+#include "workspace.h"
+#include "spaces.h"
 
 char *version[] = {
-	"9wm version 1.4.1, Copyright (c) 2018 multiple authors", 0,
+	"shrub9 version 1.0.0, Copyright (c) 2025 shrub (based on 9wm)", 0,
 };
 
 Display *dpy;
@@ -34,6 +39,10 @@ int _inset = 1;
 int curtime;
 int debug;
 int signalled;
+int auto_reshape_next = 0;
+int spaces_mode = 0;
+int workspace_switching = 0;
+int pending_workspace_unmaps = 0;
 int num_screens;
 
 #ifdef COLOR
@@ -168,6 +177,11 @@ main(int argc, char *argv[])
 	if (dpy == 0)
 		fatal("can't open display");
 
+	if (!config_init()) {
+		fprintf(stderr, "shrub9: warning: failed to load configuration, using defaults\n");
+		config_load_default();
+	}
+
 	initting = 1;
 	XSetErrorHandler(handler);
 	if (signal(SIGTERM, sighandler) == SIG_IGN)
@@ -212,23 +226,70 @@ main(int argc, char *argv[])
 	_9wm_running = XInternAtom(dpy, "_9WM_RUNNING", False);
 	_9wm_hold_mode = XInternAtom(dpy, "_9WM_HOLD_MODE", False);
 
-	if (fname != 0)
-		if ((font = XLoadQueryFont(dpy, fname)) == 0)
-			fprintf(stderr, "9wm: warning: can't load font %s\n", fname);
+	if (fname != 0) {
+		printf("[MAIN DEBUG] Loading command-line font: %s\n", fname);
+		font = config_load_font(fname);
+		if (font == 0)
+			fprintf(stderr, "shrub9: warning: can't load font %s\n", fname);
+	}
 
 	if (font == 0) {
-		i = 0;
-		for (;;) {
-			fname = fontlist[i++];
-			if (fname == 0) {
-				fprintf(stderr, "9wm: warning: can't find a font\n");
-				break;
+		/* Try to add local fonts directory to X font path */
+		char local_fonts_dir[512];
+		struct passwd *pw = getpwuid(getuid());
+		if (pw) {
+			snprintf(local_fonts_dir, sizeof(local_fonts_dir), "%s/.local/share/fonts", pw->pw_dir);
+			printf("[MAIN DEBUG] Adding local fonts directory to path: %s\n", local_fonts_dir);
+			
+			/* Check if directory exists and has fonts.dir */
+			if (access(local_fonts_dir, R_OK) == 0) {
+				char fonts_dir_path[600];
+				snprintf(fonts_dir_path, sizeof(fonts_dir_path), "%s/fonts.dir", local_fonts_dir);
+				if (access(fonts_dir_path, R_OK) == 0) {
+					/* Get current font path and extend it */
+					char **current_path;
+					int current_count;
+					char **new_path;
+					int i;
+					
+					current_path = XGetFontPath(dpy, &current_count);
+					
+					/* Create new extended path */
+					new_path = malloc((current_count + 1) * sizeof(char*));
+					for (i = 0; i < current_count; i++) {
+						new_path[i] = current_path[i];
+					}
+					new_path[current_count] = local_fonts_dir;
+					
+					if (XSetFontPath(dpy, new_path, current_count + 1) == 0) {
+						printf("[MAIN DEBUG] Successfully added local fonts to path\n");
+					} else {
+						printf("[MAIN DEBUG] Failed to set extended font path\n");
+					}
+					
+					free(new_path);
+					XFreeFontPath(current_path);
+				} else {
+					printf("[MAIN DEBUG] fonts.dir not found in %s\n", local_fonts_dir);
+				}
+			} else {
+				printf("[MAIN DEBUG] Local fonts directory not accessible: %s\n", local_fonts_dir);
 			}
-			font = XLoadQueryFont(dpy, fname);
-			if (font != 0)
-				break;
+		}
+		
+		printf("[MAIN DEBUG] Loading config font: %s\n", config.font);
+		font = config_load_font(config.font);
+		if (font == 0) {
+			fprintf(stderr, "shrub9: fatal: cannot load any font\n");
+			exit(1);
 		}
 	}
+	
+	printf("[MAIN DEBUG] Final font loaded - ascent: %d, descent: %d\n", 
+	       font ? font->ascent : 0, font ? font->descent : 0);
+	_border = config.border_width;
+	_inset = config.inset_width;
+	
 	if (border) {
 		_border--;
 		_inset--;
@@ -240,8 +301,31 @@ main(int argc, char *argv[])
 	num_screens = ScreenCount(dpy);
 	screens = (ScreenInfo *) malloc(sizeof(ScreenInfo) * num_screens);
 
-	for (i = 0; i < num_screens; i++)
+	if (termprog == NULL)
+		termprog = config.terminal;
+		
+	workspace_init(config.workspaces.count);
+	rebuild_menu();
+
+	for (i = 0; i < num_screens; i++) {
 		initscreen(&screens[i], i);
+		spaces_init(&screens[i]);
+		
+		/* Register workspace key bindings */
+		if (config.workspaces.enabled) {
+			int j;
+			for (j = 0; j < config.workspaces.count; j++) {
+				KeyCode keycode = XKeysymToKeycode(dpy, config.workspaces.switch_keys[j].keysym);
+				if (keycode != 0) {
+					XGrabKey(dpy, keycode, config.workspaces.switch_keys[j].modifiers,
+						screens[i].root, True, GrabModeAsync, GrabModeAsync);
+				}
+			}
+		}
+	}
+
+	/* Apply wallpaper if configured */
+	config_apply_wallpaper();
 
 	/*
 	 * set selection so that 9term knows we're running 
@@ -295,24 +379,74 @@ initscreen(ScreenInfo * s, int i)
 	 */
 	s->active = s->black;
 	s->inactive = s->white;
+	s->menu_bg = s->white;
+	s->menu_fg = s->black;
 #ifdef COLOR
-	if (activestr != NULL || inactivestr != NULL) {
+	{
 		Colormap cmap = DefaultColormap(dpy,s->num);
+		unsigned long active, inactive, menu_bg, menu_fg;
+		
 		if (cmap != 0) {
-			unsigned long active;
-			unsigned long inactive;
-			Status sa = getcolor(cmap, &active, activestr);
-			Status si = getcolor(cmap, &inactive, inactivestr);
-			if (sa != 0)
+			if (activestr != NULL && getcolor(cmap, &active, activestr)) {
 				s->active = active;
-			if (si != 0)
+			} else if (config_parse_color(config.active_color, &active, cmap)) {
+				s->active = active;
+			}
+			
+			if (inactivestr != NULL && getcolor(cmap, &inactive, inactivestr)) {
 				s->inactive = inactive;
+			} else if (config_parse_color(config.inactive_color, &inactive, cmap)) {
+				s->inactive = inactive;
+			}
+			
+			/* Set menu colors from config */
+			if (config_parse_color(config.menu_bg_color, &menu_bg, cmap)) {
+				s->menu_bg = menu_bg;
+			}
+			if (config_parse_color(config.menu_fg_color, &menu_fg, cmap)) {
+				s->menu_fg = menu_fg;
+			}
 		}
 	}
 #endif
-	gv.foreground = s->black ^ s->white;
+	/* Create XOR graphics context for drawing bounds/highlights */
+	gv.foreground = s->black;
 	gv.background = s->white;
-	gv.function = GXxor;
+	gv.function = GXinvert;
+	gv.line_width = 0;
+	gv.subwindow_mode = IncludeInferiors;
+	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
+	s->gc = XCreateGC(dpy, s->root, mask, &gv);
+	
+	/* Create normal graphics context for text rendering */
+	gv.foreground = s->menu_fg;
+	gv.background = s->menu_bg;
+	gv.function = GXcopy;
+	gv.line_width = 0;
+	gv.subwindow_mode = IncludeInferiors;
+	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
+	if (font != 0) {
+		printf("[GC DEBUG] Setting font ID %ld in text GC for screen %d\n", font->fid, s->num);
+		gv.font = font->fid;
+		mask |= GCFont;
+	} else {
+		printf("[GC DEBUG] WARNING: No font available for text GC on screen %d\n", s->num);
+	}
+	s->text_gc = XCreateGC(dpy, s->root, mask, &gv);
+	
+	/* Create menu highlight graphics context for blue rectangle */
+	gv.foreground = s->menu_fg;  /* Blue - for drawing the highlight rectangle */
+	gv.background = s->menu_bg;  /* Cream */
+	gv.function = GXcopy;
+	gv.line_width = 0;
+	gv.subwindow_mode = IncludeInferiors;
+	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
+	s->menu_highlight_gc = XCreateGC(dpy, s->root, mask, &gv);
+	
+	/* Create menu highlight text graphics context for cream text */
+	gv.foreground = s->menu_bg;  /* Cream - for drawing text on blue background */
+	gv.background = s->menu_fg;  /* Blue */
+	gv.function = GXcopy;
 	gv.line_width = 0;
 	gv.subwindow_mode = IncludeInferiors;
 	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
@@ -320,18 +454,18 @@ initscreen(ScreenInfo * s, int i)
 		gv.font = font->fid;
 		mask |= GCFont;
 	}
-	s->gc = XCreateGC(dpy, s->root, mask, &gv);
+	s->menu_highlight_text_gc = XCreateGC(dpy, s->root, mask, &gv);
 
 	initcurs(s);
 
 	attr.cursor = s->arrow;
 	attr.event_mask = SubstructureRedirectMask
-	    | SubstructureNotifyMask | ColormapChangeMask | ButtonPressMask | ButtonReleaseMask | PropertyChangeMask;
+	    | SubstructureNotifyMask | ColormapChangeMask | ButtonPressMask | ButtonReleaseMask | PropertyChangeMask | KeyPressMask;
 	mask = CWCursor | CWEventMask;
 	XChangeWindowAttributes(dpy, s->root, mask, &attr);
 	XSync(dpy, False);
 
-	s->menuwin = XCreateSimpleWindow(dpy, s->root, 0, 0, 1, 1, 1, s->black, s->white);
+	s->menuwin = XCreateSimpleWindow(dpy, s->root, 0, 0, 1, 1, 1, s->menu_fg, s->menu_bg);
 }
 
 ScreenInfo *
@@ -476,7 +610,15 @@ cleanup(void)
 	}
 
 	XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, timestamp());
-	for (i = 0; i < num_screens; i++)
+	
+	/* Free graphics contexts */
+	for (i = 0; i < num_screens; i++) {
 		cmapnofocus(&screens[i]);
+		if (screens[i].gc != None)
+			XFreeGC(dpy, screens[i].gc);
+		if (screens[i].text_gc != None)
+			XFreeGC(dpy, screens[i].text_gc);
+	}
+	
 	XCloseDisplay(dpy);
 }

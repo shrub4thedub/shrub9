@@ -34,11 +34,13 @@ void	shapenotify();
 void	enter();
 void	focusin();
 void	reparent();
+void	keypress();
 
 /* manage.c */
 int 	manage();
 void	scanwins();
 void	setshape();
+void	apply_window_rounding();
 void	withdraw();
 void	gravitate();
 void	cmapfocus();
@@ -46,6 +48,7 @@ void	cmapnofocus();
 void	getcmaps();
 int 	_getprop();
 char	*getprop();
+void	restore_terminal_from_child();
 Window	getwprop();
 int 	getiprop();
 int 	getwstate();
@@ -57,17 +60,25 @@ void	gettrans();
 /* menu.c */
 void	button();
 void	spawn();
-void	reshape();
+void	spawn_sized();
+void	spawn_terminal_interactive();
+int	reshape();
+int	reshape_ex();
 void	move();
 void	delete();
 void	hide();
 void	unhide();
 void	unhidec();
 void	renamec();
+void	rebuild_menu();
+void	tile_windows();
 
 /* client.c */
 void	setactive();
 void	draw_border();
+void	create_titlebar();
+void	draw_titlebar();
+void	destroy_titlebar();
 void	active();
 void	nofocus();
 void	top();
@@ -80,6 +91,7 @@ void	dump_clients();
 int 	menuhit();
 Client	*selectwin();
 int 	sweep();
+int 	sweep_area();
 int 	drag();
 void	getmouse();
 void	setmouse();
@@ -93,3 +105,39 @@ void	dotrace();
 
 /* cursor.c */
 void	initcurs(ScreenInfo * s);
+
+/* config.c */
+int	config_init();
+int	config_load();
+int	config_load_default();
+void	config_free();
+int	config_get_workspace_key();
+const char*	config_get_menu_command();
+const char*	config_get_menu_label();
+int	config_parse_color();
+XFontStruct*	config_load_font();
+int	config_apply_wallpaper();
+
+/* workspace.c */
+void	workspace_init();
+void	workspace_switch();
+void	workspace_add_client();
+void	workspace_remove_client();
+void	workspace_move_client();
+int	workspace_get_current();
+void	workspace_show_all_clients();
+void	workspace_hide_all_clients();
+Client*	workspace_get_next_client();
+void	workspace_cleanup();
+
+/* spaces.c */
+void	spaces_init();
+void	spaces_show();
+void	spaces_hide();
+void	spaces_draw();
+void	spaces_handle_button();
+void	spaces_handle_motion();
+void	spaces_handle_key();
+int	spaces_get_workspace_at_point();
+void	spaces_draw_workspace();
+void	spaces_draw_window_thumbnail();

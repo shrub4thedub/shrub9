@@ -53,6 +53,22 @@ struct Client {
 	Window		*cmapwins;
 	Colormap	*wmcmaps;
 	ScreenInfo	*screen;
+	
+	/* Workspace support */
+	int		workspace;
+	Client		*workspace_next;
+	Client		*workspace_prev;
+	
+	/* Titlebar support */
+	Window		titlebar;
+	int		title_width;
+	
+	/* Terminal-launcher support */
+	int		is_terminal;
+	Client		*terminal_parent;
+	Client		*launched_child;
+	int		saved_x, saved_y;
+	int		saved_dx, saved_dy;
 };
 
 #define hidden(c)	((c)->state == IconicState)
@@ -75,10 +91,15 @@ struct ScreenInfo {
 	Window		menuwin;
 	Colormap	def_cmap;
 	GC		gc;
+	GC		text_gc;
+	GC		menu_highlight_gc;
+	GC		menu_highlight_text_gc;
 	unsigned long	black;
 	unsigned long	white;
 	unsigned long	active;
 	unsigned long	inactive;
+	unsigned long	menu_bg;
+	unsigned long	menu_fg;
 	int		min_cmaps;
 	Cursor		target;
 	Cursor		sweep0;
@@ -111,6 +132,10 @@ extern int		_border;
 extern int		_inset;
 extern int		curtime;
 extern int		debug;
+extern int		auto_reshape_next;
+extern int		spaces_mode;
+extern int		workspace_switching;
+extern int		pending_workspace_unmaps;
 
 extern Atom		exit_9wm;
 extern Atom		restart_9wm;

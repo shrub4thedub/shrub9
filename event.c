@@ -11,6 +11,9 @@
 #include <X11/extensions/shape.h>
 #include "dat.h"
 #include "fns.h"
+#include "config.h"
+#include "workspace.h"
+#include "spaces.h"
 
 void
 mainloop(int shape_event)
@@ -19,6 +22,9 @@ mainloop(int shape_event)
 
 	for (;;) {
 		getevent(&ev);
+		
+		/* Safety check for workspace switching state */
+		workspace_check_switching_state();
 
 #ifdef	DEBUG_EV
 		if (debug) {
@@ -39,6 +45,19 @@ mainloop(int shape_event)
 			button(&ev.xbutton);
 			break;
 		case ButtonRelease:
+			if (spaces_mode && ev.xbutton.window == spaces_view.overlay) {
+				spaces_handle_button(&ev.xbutton);
+			}
+			break;
+		case KeyPress:
+			if (spaces_mode && ev.xkey.window == spaces_view.overlay) {
+				spaces_handle_key(&ev.xkey);
+			} else {
+				keypress(&ev.xkey);
+			}
+			break;
+		case KeyRelease:
+			/* Ignore key releases */
 			break;
 		case MapRequest:
 			mapreq(&ev.xmaprequest);
@@ -86,7 +105,10 @@ mainloop(int shape_event)
 			focusin(&ev.xfocus);
 			break;
 		case MotionNotify:
-		case Expose:
+			if (spaces_mode && ev.xmotion.window == spaces_view.overlay) {
+				spaces_handle_motion(&ev.xmotion);
+			}
+			break;
 		case FocusOut:
 		case ConfigureNotify:
 		case MapNotify:
@@ -95,6 +117,16 @@ mainloop(int shape_event)
 			 * not interested 
 			 */
 			trace("ignore", 0, &ev);
+			break;
+		case Expose:
+			if (spaces_mode && ev.xexpose.window == spaces_view.overlay) {
+				spaces_draw();
+			} else {
+				Client *c = getclient(ev.xexpose.window, 0);
+				if (c && c->titlebar == ev.xexpose.window) {
+					draw_titlebar(c);
+				}
+			}
 			break;
 		}
 	}
@@ -258,8 +290,11 @@ newwindow(XCreateWindowEvent * e)
 	 */
 	if (e->override_redirect)
 		return;
+	fprintf(stderr, "mapreq: getting client for window 0x%lx\n", e->window);
 	c = getclient(e->window, 1);
+	fprintf(stderr, "mapreq: getclient returned %p\n", (void*)c);
 	if (c && c->window == e->window && (s = getscreen(e->parent))) {
+		fprintf(stderr, "mapreq: calling manage for client %p\n", (void*)c);
 		c->x = e->x;
 		c->y = e->y;
 		c->dx = e->width;
@@ -280,6 +315,11 @@ destroy(Window w)
 	c = getclient(w, 0);
 	if (c == 0)
 		return;
+
+	/* Handle terminal-launcher restoration */
+	if (config.terminal_launcher_mode && c->terminal_parent) {
+		restore_terminal_from_child(c);
+	}
 
 	rmclient(c);
 
@@ -503,5 +543,34 @@ focusin(XFocusChangeEvent * e)
 		XMapRaised(dpy, c->parent);
 		top(c);
 		active(c);
+	}
+}
+
+void
+keypress(XKeyEvent * e)
+{
+	KeySym keysym;
+	int workspace;
+	
+	curtime = e->time;
+	
+	/* Handle spaces overlay key presses */
+	if (spaces_mode) {
+		if (e->window == spaces_view.overlay) {
+			spaces_handle_key(e);
+			return;
+		} else {
+			/* Safety check: if spaces_mode is on but event is not for overlay, 
+			   something is wrong - reset spaces mode */
+			spaces_mode = 0;
+			spaces_view.active = 0;
+		}
+	}
+	
+	keysym = XLookupKeysym(e, 0);
+	
+	workspace = config_get_workspace_key(keysym, e->state);
+	if (workspace >= 0) {
+		workspace_switch(workspace);
 	}
 }
