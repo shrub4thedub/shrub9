@@ -4,6 +4,11 @@ shrub9
 shrub9 is a  "enhanced" fork of 9wm that adds silly features no one asked for.
 shrub9 adds virtual workspaces withkeyboard switching, a spaces overview mode accessed from the menu for visual workspace management, 
 really shitty automatic window tiling (just moves them around, no dynamic tiling). Now i've listed the features no one asked for, here are some you may like. You can now theme the menu and select a custom font. you can theme window borders easily. you can have buggy rounded corners and buggy window titlebars. you can add custom commands to the menu, eg open firefox, run this bash script. Much of it will not work. None of it is tested. If you use the features that actually work, it may be somewhat of a good experience. Everything is controlled from a config file which you should place at ~/.config/shrub9/config. I have included a sample configuration file.  Despite these "extensive" additions, shrub9 maintains the original's simplicity and can be configured to behave exactly like good old rio when desired.
+
+Here is an image.
+
+<img width="1600" height="900" alt="shrub9" src="https://github.com/user-attachments/assets/84b67c63-9904-4141-b06c-f3a2e58c20d9" />
+
 shrub9 is distributed under an MIT liscence.
 
 Installation
