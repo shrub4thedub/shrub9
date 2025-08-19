@@ -26,52 +26,52 @@ terminal = xterm
 #lookee here an example of all the fun stuff you can do
 
 # Virtual Workspaces (enable multiple workspaces)
-# workspace_count 4
-# workspace_key_1 Super+1
-# workspace_key_2 Super+2
-# workspace_key_3 Super+3
-# workspace_key_4 Super+4
+# workspace_count = 4
+# workspace_key_1 = Super+1
+# workspace_key_2 = Super+2
+# workspace_key_3 = Super+3
+# workspace_key_4 = Super+4
 
 # Window Appearance
-# show_titlebars 0
-# titlebar_height 18
-# titlebar_bg_color #cccccc
-# titlebar_fg_color black
-# rounding 0
-# rounding_radius 0
+# show_titlebars = 0
+# titlebar_height = 18
+# titlebar_bg_color = #cccccc
+# titlebar_fg_color = black
+# rounding = 0
+# rounding_radius = 0
 
 # Wallpaper 
-# wallpaper_enabled 1
-# wallpaper /path/to/your/wallpaper.jpg
+# wallpaper_enabled = 1
+# wallpaper = /path/to/your/wallpaper.jpg
 
 # Terminal Features
-# terminal_launcher_mode 1
-# terminal kitty
-# terminal_classes st-256color,xterm-256color,gnome-terminal
+# terminal_launcher_mode = 1
+# terminal = kitty
+# terminal_classes = st-256color,xterm-256color,gnome-terminal
 
 # Custom Menu Items (up to 32 items)
-# menu_0_label term
-# menu_0_command terminal
-# menu_1_label resize
-# menu_1_command reshape
-# menu_2_label move
-# menu_2_command move
-# menu_3_label kill
-# menu_3_command delete
-# menu_4_label hide
-# menu_4_command hide
-# menu_5_label spaces
-# menu_5_command spaces 
+# menu_0_label = term
+# menu_0_command = terminal
+# menu_1_label = resize
+# menu_1_command = reshape
+# menu_2_label = move
+# menu_2_command = move
+# menu_3_label = kill
+# menu_3_command = delete
+# menu_4_label = hide
+# menu_4_command = hide
+# menu_5_label = spaces
+# menu_5_command = spaces 
 #workspace menu^
-# menu_6_label tile
-# menu_6_command tile
+# menu_6_label = tile
+# menu_6_command = tile
 #tiling^
-# menu_7_label firefox
-# menu_7_command firefox
+# menu_7_label = firefox
+# menu_7_command = firefox
 
 # More Color Options but dont use them its broken af
-# titlebar_bg_color #444444
-# titlebar_fg_color white
+# titlebar_bg_color = #444444
+# titlebar_fg_color = white
 
 # Font Options (try different fonts)
-# font -*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*
+# font = -*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*

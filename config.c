@@ -79,8 +79,15 @@ config_load(const char *path)
 		if (line[0] == '#' || line[0] == '\n' || line[0] == '\0')
 			continue;
 			
-		if (!parse_key_value(line, key, value, CONFIG_MAX_STRING))
+		if (!parse_key_value(line, key, value, CONFIG_MAX_STRING)) {
+			/* Check if line contains content but no equals sign */
+			char *trimmed = trim_whitespace(line);
+			if (strlen(trimmed) > 0 && !strchr(trimmed, '=')) {
+				fprintf(stderr, "shrub9: config syntax error at line %d: missing '=' (expected format: key = value)\n", line_num);
+				fprintf(stderr, "shrub9:   problematic line: %s\n", trimmed);
+			}
 			continue;
+		}
 		
 		if (strcmp(key, "active_color") == 0) {
 			strncpy(config.active_color, value, CONFIG_MAX_STRING - 1);
@@ -95,7 +102,12 @@ config_load(const char *path)
 		} else if (strcmp(key, "show_titlebars") == 0) {
 			config.show_titlebars = atoi(value);
 		} else if (strcmp(key, "titlebar_height") == 0) {
-			config.titlebar_height = atoi(value);
+			int titlebar_height = atoi(value);
+			if (titlebar_height < 0) {
+				fprintf(stderr, "shrub9: config error at line %d: titlebar_height cannot be negative (got %d)\n", line_num, titlebar_height);
+			} else {
+				config.titlebar_height = titlebar_height;
+			}
 		} else if (strcmp(key, "titlebar_bg_color") == 0) {
 			strncpy(config.titlebar_bg_color, value, CONFIG_MAX_STRING - 1);
 		} else if (strcmp(key, "titlebar_fg_color") == 0) {
@@ -109,9 +121,19 @@ config_load(const char *path)
 		} else if (strcmp(key, "terminal_classes") == 0) {
 			strncpy(config.terminal_classes, value, CONFIG_MAX_STRING - 1);
 		} else if (strcmp(key, "border_width") == 0) {
-			config.border_width = atoi(value);
+			int border_width = atoi(value);
+			if (border_width < 0) {
+				fprintf(stderr, "shrub9: config error at line %d: border_width cannot be negative (got %d)\n", line_num, border_width);
+			} else {
+				config.border_width = border_width;
+			}
 		} else if (strcmp(key, "inset_width") == 0) {
-			config.inset_width = atoi(value);
+			int inset_width = atoi(value);
+			if (inset_width < 0) {
+				fprintf(stderr, "shrub9: config error at line %d: inset_width cannot be negative (got %d)\n", line_num, inset_width);
+			} else {
+				config.inset_width = inset_width;
+			}
 		} else if (strcmp(key, "rounding") == 0) {
 			config.rounding = atoi(value);
 		} else if (strcmp(key, "rounding_radius") == 0) {
@@ -123,6 +145,10 @@ config_load(const char *path)
 			if (count > 0 && count <= CONFIG_MAX_WORKSPACES) {
 				config.workspaces.count = count;
 				config.workspaces.enabled = 1;
+			} else if (count <= 0) {
+				fprintf(stderr, "shrub9: config error at line %d: workspace_count must be greater than 0 (got %d)\n", line_num, count);
+			} else {
+				fprintf(stderr, "shrub9: config error at line %d: workspace_count exceeds maximum %d (got %d)\n", line_num, CONFIG_MAX_WORKSPACES, count);
 			}
 		} else if (strncmp(key, "menu_", 5) == 0 && strstr(key, "_label")) {
 			int idx = atoi(key + 5);
@@ -130,11 +156,15 @@ config_load(const char *path)
 				strncpy(config.menu_items[idx].label, value, CONFIG_MAX_STRING - 1);
 				if (idx >= config.menu_count)
 					config.menu_count = idx + 1;
+			} else {
+				fprintf(stderr, "shrub9: config error at line %d: menu index %d out of range (0-%d)\n", line_num, idx, CONFIG_MAX_MENU_ITEMS - 1);
 			}
 		} else if (strncmp(key, "menu_", 5) == 0 && strstr(key, "_command")) {
 			int idx = atoi(key + 5);
 			if (idx >= 0 && idx < CONFIG_MAX_MENU_ITEMS) {
 				strncpy(config.menu_items[idx].command, value, CONFIG_MAX_STRING - 1);
+			} else {
+				fprintf(stderr, "shrub9: config error at line %d: menu index %d out of range (0-%d)\n", line_num, idx, CONFIG_MAX_MENU_ITEMS - 1);
 			}
 		} else if (strncmp(key, "workspace_key_", 14) == 0) {
 			int ws = atoi(key + 14);
@@ -146,7 +176,11 @@ config_load(const char *path)
 					config.workspaces.switch_keys[ws-1].keysym = parse_keysym(plus + 1);
 					config.workspaces.switch_keys[ws-1].workspace_num = ws - 1;
 					config.workspaces.switch_keys[ws-1].is_workspace_switch = 1;
+				} else {
+					fprintf(stderr, "shrub9: config error at line %d: workspace key binding '%s' missing '+' separator (expected format: modifier+key)\n", line_num, value);
 				}
+			} else {
+				fprintf(stderr, "shrub9: config error at line %d: workspace number %d out of range (1-%d)\n", line_num, ws, CONFIG_MAX_WORKSPACES);
 			}
 		} else if (strcmp(key, "wallpaper") == 0) {
 			strncpy(config.wallpaper_path, value, CONFIG_MAX_STRING - 1);
@@ -437,8 +471,14 @@ parse_key_value(char *line, char *key, char *value, int max_len)
 	trimmed_key = trim_whitespace(line);
 	trimmed_value = trim_whitespace(eq_pos + 1);
 	
-	if (strlen(trimmed_key) >= max_len || strlen(trimmed_value) >= max_len)
+	if (strlen(trimmed_key) >= max_len) {
+		fprintf(stderr, "shrub9: config error: key too long (max %d characters)\n", max_len - 1);
 		return 0;
+	}
+	if (strlen(trimmed_value) >= max_len) {
+		fprintf(stderr, "shrub9: config error: value too long (max %d characters)\n", max_len - 1);
+		return 0;
+	}
 	
 	strcpy(key, trimmed_key);
 	strcpy(value, trimmed_value);

@@ -351,8 +351,9 @@ sweepcalc(Client * c, int x, int y)
 void
 dragcalc(Client * c, int x, int y)
 {
-	c->x = x;
-	c->y = y;
+	/* Apply the stored offset so window moves relative to initial click position */
+	c->x = x - c->drag_offset_x;
+	c->y = y - c->drag_offset_y;
 }
 
 void
@@ -504,13 +505,13 @@ drag(Client * c)
 	ScreenInfo *s;
 
 	s = c->screen;
-	if (c->init)
-		setmouse(c->x - BORDER, c->y - BORDER, s);
-	else {
-		getmouse(&c->x, &c->y, s);	/* start at current mouse pos */
-		c->x += BORDER;
-		c->y += BORDER;
-	}
+	/* Store original window position and calculate mouse offset */
+	int mouse_x, mouse_y;
+	getmouse(&mouse_x, &mouse_y, s);	/* get current mouse position */
+	
+	/* Store the offset from mouse to window corner for drag calculations */
+	c->drag_offset_x = mouse_x - (c->x - BORDER);
+	c->drag_offset_y = mouse_y - (c->y - BORDER);
 	status = grab(s->root, s->root, ButtonMask, s->boxcurs, 0);
 	if (status != GrabSuccess) {
 		graberror("drag", status);	/* */

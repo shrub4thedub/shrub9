@@ -144,10 +144,10 @@ spaces_draw_workspace(int ws, int x, int y, int width, int height)
 	int is_drag_target = (spaces_view.drag_active && ws == spaces_view.selected_workspace);
 	unsigned long bg_color, fg_color, border_color;
 	
-	/* Determine colors to use - config colors with menu colors as fallback */
-	bg_color = spaces_view.screen->menu_bg;  /* Default to menu background */
-	fg_color = spaces_view.screen->menu_fg;  /* Default to menu foreground */
-	border_color = spaces_view.screen->active; /* Default to active color for borders */
+	/* Use menu colors instead of one color and its inverse */
+	bg_color = spaces_view.screen->menu_bg;  /* Menu background - brown */
+	fg_color = spaces_view.screen->menu_fg;  /* Menu foreground - cream */
+	border_color = spaces_view.screen->menu_fg; /* Use menu foreground for borders too */
 	
 	/* Always draw the box outline */
 	if (is_current && is_valid) {
@@ -159,8 +159,8 @@ spaces_draw_workspace(int ws, int x, int y, int width, int height)
 		XFillRectangle(dpy, spaces_view.overlay, spaces_view.screen->gc, 
 		               x, y, width, height);
 	} else if (is_drag_target && is_valid) {
-		/* Drag target - highlight border */
-		XSetForeground(dpy, spaces_view.screen->gc, spaces_view.screen->active);
+		/* Drag target - highlight border using menu foreground */
+		XSetForeground(dpy, spaces_view.screen->gc, border_color);
 		XFillRectangle(dpy, spaces_view.overlay, spaces_view.screen->gc, 
 		               x - 3, y - 3, width + 6, height + 6);
 		XSetForeground(dpy, spaces_view.screen->gc, bg_color);
@@ -175,10 +175,11 @@ spaces_draw_workspace(int ws, int x, int y, int width, int height)
 		XDrawRectangle(dpy, spaces_view.overlay, spaces_view.screen->gc, 
 		               x, y, width - 1, height - 1);
 	} else {
-		/* Invalid workspace - inactive color for both interior and border */
-		XSetForeground(dpy, spaces_view.screen->gc, spaces_view.screen->inactive);
+		/* Invalid workspace - use menu colors for consistency */
+		XSetForeground(dpy, spaces_view.screen->gc, bg_color);
 		XFillRectangle(dpy, spaces_view.overlay, spaces_view.screen->gc, 
 		               x, y, width, height);
+		XSetForeground(dpy, spaces_view.screen->gc, fg_color);
 		XDrawRectangle(dpy, spaces_view.overlay, spaces_view.screen->gc, 
 		               x, y, width - 1, height - 1);
 	}

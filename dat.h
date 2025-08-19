@@ -69,6 +69,9 @@ struct Client {
 	Client		*launched_child;
 	int		saved_x, saved_y;
 	int		saved_dx, saved_dy;
+	
+	/* Drag offset support for better window moving */
+	int		drag_offset_x, drag_offset_y;
 };
 
 #define hidden(c)	((c)->state == IconicState)
