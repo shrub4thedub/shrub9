@@ -1,2 +1,7 @@
 *.o
 9wm
+shrub9
+*.swp
+*~
+.DS_Store
+CLAUDE.md
