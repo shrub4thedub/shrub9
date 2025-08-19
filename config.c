@@ -27,6 +27,7 @@ static unsigned int parse_modifiers(const char *mod_str);
 static KeySym parse_keysym(const char *key_str);
 static void config_set_defaults(void);
 static int ensure_config_dir(const char *path);
+static int create_default_config_file(const char *config_path);
 
 int
 config_init(void)
@@ -54,6 +55,12 @@ config_init(void)
 		char config_dir[CONFIG_MAX_STRING];
 		snprintf(config_dir, CONFIG_MAX_STRING, "%s/.config/shrub9", home);
 		ensure_config_dir(config_dir);
+		
+		/* Create default config file if it doesn't exist */
+		if (access(config.config_path, F_OK) != 0) {
+			create_default_config_file(config.config_path);
+		}
+		
 		return config_load_default();
 	}
 }
@@ -599,5 +606,73 @@ config_apply_wallpaper(void)
 		return 0;
 	}
 	
+	return 1;
+}
+
+static int
+create_default_config_file(const char *config_path)
+{
+	FILE *src_fp, *dst_fp;
+	char sample_path[CONFIG_MAX_STRING];
+	char buffer[CONFIG_MAX_STRING];
+	char *shrub9_dir;
+	char *home;
+	struct passwd *pw;
+	
+	/* Get home directory */
+	home = getenv("HOME");
+	if (home == NULL) {
+		pw = getpwuid(getuid());
+		if (pw == NULL) {
+			fprintf(stderr, "shrub9: cannot determine home directory\n");
+			return 0;
+		}
+		home = pw->pw_dir;
+	}
+	
+	/* Try to find sample_config in various locations */
+	shrub9_dir = getenv("SHRUB9_DIR");
+	if (shrub9_dir) {
+		snprintf(sample_path, CONFIG_MAX_STRING, "%s/sample_config", shrub9_dir);
+	} else {
+		/* Check HOME/shrub9/sample_config first */
+		snprintf(sample_path, CONFIG_MAX_STRING, "%s/shrub9/sample_config", home);
+		if (access(sample_path, R_OK) != 0) {
+			/* Then try current working directory */
+			if (access("./sample_config", R_OK) == 0) {
+				strcpy(sample_path, "./sample_config");
+			} else if (access("/usr/share/shrub9/sample_config", R_OK) == 0) {
+				strcpy(sample_path, "/usr/share/shrub9/sample_config");
+			} else if (access("/usr/local/share/shrub9/sample_config", R_OK) == 0) {
+				strcpy(sample_path, "/usr/local/share/shrub9/sample_config");
+			} else {
+				fprintf(stderr, "shrub9: warning: sample_config not found, creating basic config\n");
+				return 0;
+			}
+		}
+	}
+	
+	src_fp = fopen(sample_path, "r");
+	if (!src_fp) {
+		fprintf(stderr, "shrub9: warning: cannot open sample_config at %s\n", sample_path);
+		return 0;
+	}
+	
+	dst_fp = fopen(config_path, "w");
+	if (!dst_fp) {
+		fprintf(stderr, "shrub9: warning: cannot create config file at %s\n", config_path);
+		fclose(src_fp);
+		return 0;
+	}
+	
+	/* Copy sample_config to the user's config location */
+	while (fgets(buffer, sizeof(buffer), src_fp)) {
+		fputs(buffer, dst_fp);
+	}
+	
+	fclose(src_fp);
+	fclose(dst_fp);
+	
+	printf("shrub9: created default config file at %s\n", config_path);
 	return 1;
 }
