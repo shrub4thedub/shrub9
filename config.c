@@ -658,6 +658,13 @@ create_default_config_file(const char *config_path)
 		return 0;
 	}
 	
+	/* Check if config file already exists - don't overwrite it */
+	if (access(config_path, F_OK) == 0) {
+		printf("shrub9: config file already exists at %s, not overwriting\n", config_path);
+		fclose(src_fp);
+		return 1;
+	}
+	
 	dst_fp = fopen(config_path, "w");
 	if (!dst_fp) {
 		fprintf(stderr, "shrub9: warning: cannot create config file at %s\n", config_path);
