@@ -267,6 +267,85 @@ config_parse_color(const char *colorstr, unsigned long *pixel, Colormap cmap)
 	return 0;
 }
 
+#ifdef XFT
+static XftFont*
+config_load_xft_font(const char *requested_font)
+{
+	XftFont *xft_font = NULL;
+	FcPattern *pattern, *match;
+	FcResult result;
+	
+	if (!requested_font || strlen(requested_font) == 0) {
+		return NULL;
+	}
+	
+	printf("[XFT DEBUG] Attempting to load Xft font: %s\n", requested_font);
+	
+	/* Initialize fontconfig if not already done */
+	if (!FcConfigGetCurrent()) {
+		if (!FcInit()) {
+			printf("[XFT DEBUG] Failed to initialize fontconfig\n");
+			return NULL;
+		}
+	}
+	
+	/* Create pattern from font name */
+	pattern = FcNameParse((const FcChar8*)requested_font);
+	if (!pattern) {
+		printf("[XFT DEBUG] Failed to parse font name: %s\n", requested_font);
+		return NULL;
+	}
+	
+	/* Set default size if none specified */
+	FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+	FcDefaultSubstitute(pattern);
+	
+	/* Find the best match */
+	match = FcFontMatch(NULL, pattern, &result);
+	if (!match || result != FcResultMatch) {
+		printf("[XFT DEBUG] No match found for font: %s\n", requested_font);
+		if (match) FcPatternDestroy(match);
+		FcPatternDestroy(pattern);
+		return NULL;
+	}
+	
+	/* Load the font */
+	xft_font = XftFontOpenPattern(dpy, match);
+	if (xft_font) {
+		printf("[XFT DEBUG] Successfully loaded Xft font: %s\n", requested_font);
+		printf("[XFT DEBUG] Xft font details - ascent: %d, descent: %d\n", 
+		       xft_font->ascent, xft_font->descent);
+	} else {
+		printf("[XFT DEBUG] Failed to open Xft font: %s\n", requested_font);
+		FcPatternDestroy(match);
+	}
+	
+	FcPatternDestroy(pattern);
+	return xft_font;
+}
+
+static int
+is_ttf_font_name(const char *font_name)
+{
+	if (!font_name) return 0;
+	
+	/* Check if it looks like a TTF font name (no dashes, modern naming) */
+	if (strchr(font_name, '-') == NULL) {
+		/* Simple name like "DejaVu Sans" or "Arial" */
+		return 1;
+	}
+	
+	/* Check for common TTF font families */
+	if (strstr(font_name, "DejaVu") || strstr(font_name, "Liberation") ||
+	    strstr(font_name, "Arial") || strstr(font_name, "Times") ||
+	    strstr(font_name, "Courier New") || strstr(font_name, "Verdana")) {
+		return 1;
+	}
+	
+	return 0;
+}
+#endif
+
 XFontStruct*
 config_load_font(const char *requested_font)
 {
@@ -386,6 +465,46 @@ config_load_font(const char *requested_font)
 	
 	printf("ERROR: Could not load any font!\n");
 	return NULL;
+}
+
+int
+config_load_font_hybrid(const char *requested_font)
+{
+	if (!requested_font || strlen(requested_font) == 0) {
+		return 0;
+	}
+	
+#ifdef XFT
+	/* First try Xft for TTF fonts */
+	if (is_ttf_font_name(requested_font)) {
+		printf("[FONT DEBUG] Detected TTF font name, trying Xft first: %s\n", requested_font);
+		xft_font = config_load_xft_font(requested_font);
+		if (xft_font) {
+			use_xft = 1;
+			font = NULL; /* Don't use core fonts when Xft works */
+			printf("[FONT DEBUG] Using Xft font: %s\n", requested_font);
+			return 1;
+		}
+	}
+#endif
+	
+	/* Fallback to core fonts */
+	printf("[FONT DEBUG] Trying core fonts for: %s\n", requested_font);
+	font = config_load_font(requested_font);
+	if (font) {
+#ifdef XFT
+		use_xft = 0;
+		if (xft_font) {
+			XftFontClose(dpy, xft_font);
+			xft_font = NULL;
+		}
+#endif
+		printf("[FONT DEBUG] Using core font: %s\n", requested_font);
+		return 1;
+	}
+	
+	printf("[FONT DEBUG] Failed to load font with any method: %s\n", requested_font);
+	return 0;
 }
 
 static void

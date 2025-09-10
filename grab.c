@@ -15,6 +15,13 @@
 static void apply_menu_rounding(Window menuwin, int width, int height);
 static char* prepare_menu_text(const char* original, char* buffer, int buffer_size);
 
+#ifdef XFT
+static int get_text_width(const char* text);
+static int get_font_ascent(void);
+static int get_font_descent(void);
+static void draw_text(ScreenInfo *s, Window win, int x, int y, const char* text, int highlight);
+#endif
+
 static char*
 prepare_menu_text(const char* original, char* buffer, int buffer_size)
 {
@@ -36,6 +43,60 @@ prepare_menu_text(const char* original, char* buffer, int buffer_size)
 		return (char*)original;
 	}
 }
+
+#ifdef XFT
+static int
+get_text_width(const char* text)
+{
+	if (use_xft && xft_font) {
+		XGlyphInfo extents;
+		XftTextExtentsUtf8(dpy, xft_font, (const FcChar8*)text, strlen(text), &extents);
+		return extents.width;
+	} else if (font) {
+		return XTextWidth(font, text, strlen(text));
+	}
+	return 0;
+}
+
+static int
+get_font_ascent(void)
+{
+	if (use_xft && xft_font) {
+		return xft_font->ascent;
+	} else if (font) {
+		return font->ascent;
+	}
+	return 0;
+}
+
+static int
+get_font_descent(void)
+{
+	if (use_xft && xft_font) {
+		return xft_font->descent;
+	} else if (font) {
+		return font->descent;
+	}
+	return 0;
+}
+
+static void
+draw_text(ScreenInfo *s, Window win, int x, int y, const char* text, int highlight)
+{
+	if (use_xft && xft_font && s->xft_draw) {
+		/* Update XftDraw drawable to current window */
+		XftDrawChange(s->xft_draw, win);
+		XftDrawStringUtf8(s->xft_draw, 
+			highlight ? &s->xft_highlight_color : &s->xft_color,
+			xft_font, x, y, (const FcChar8*)text, strlen(text));
+	} else if (font) {
+		/* Use traditional X11 text drawing */
+		XDrawString(dpy, win, 
+			highlight ? s->menu_highlight_text_gc : s->text_gc,
+			x, y, text, strlen(text));
+	}
+}
+#endif
 
 int
 nobuttons(XButtonEvent * e)
@@ -84,18 +145,36 @@ menuhit(XButtonEvent * e, Menu * m)
 	int tx, ty;
 	ScreenInfo *s;
 
+#ifdef XFT
+	if (!use_xft && font == 0) {
+#else
 	if (font == 0) {
+#endif
 		printf("[MENU DEBUG] ERROR: No font available for menu rendering\n");
 		return -1;
 	}
-	printf("[MENU DEBUG] Menu using font - ascent: %d, descent: %d\n", font->ascent, font->descent);
+	
+#ifdef XFT
+	if (use_xft && xft_font) {
+		printf("[MENU DEBUG] Menu using Xft font - ascent: %d, descent: %d\n", 
+		       xft_font->ascent, xft_font->descent);
+	} else
+#endif
+	if (font) {
+		printf("[MENU DEBUG] Menu using core font - ascent: %d, descent: %d\n", 
+		       font->ascent, font->descent);
+	}
 	s = getscreen(e->root);
 	if (s == 0 || e->window == s->menuwin)	/* ugly event mangling */
 		return -1;
 
 	dx = 0;
 	for (n = 0; m->item[n]; n++) {
+#ifdef XFT
+		wide = get_text_width(m->item[n]) + 4;
+#else
 		wide = XTextWidth(font, m->item[n], strlen(m->item[n])) + 4;
+#endif
 		if (wide > dx)
 			dx = wide;
 	}
@@ -104,7 +183,11 @@ menuhit(XButtonEvent * e, Menu * m)
 	if (cur >= n)
 		cur = n - 1;
 
+#ifdef XFT
+	high = get_font_ascent() + get_font_descent() + 1;
+#else
 	high = font->ascent + font->descent + 1;
+#endif
 	dy = n * high;
 	x = e->x - wide / 2;
 	y = e->y - cur * high - high / 2;
@@ -207,9 +290,15 @@ menuhit(XButtonEvent * e, Menu * m)
 				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
 				
 				/* Center all text */
+#ifdef XFT
+				tx = (wide - get_text_width(display_text)) / 2;
+				ty = old * high + get_font_ascent() + 1;
+				draw_text(s, s->menuwin, tx, ty, display_text, 0);
+#else
 				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = old * high + font->ascent + 1;
 				XDrawString(dpy, s->menuwin, s->text_gc, tx, ty, display_text, strlen(display_text));
+#endif
 			}
 			if (cur >= 0 && cur < n) {
 				/* Draw current item highlighted */
@@ -225,9 +314,15 @@ menuhit(XButtonEvent * e, Menu * m)
 				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
 				
 				/* Center all text */
+#ifdef XFT
+				tx = (wide - get_text_width(display_text)) / 2;
+				ty = cur * high + get_font_ascent() + 1;
+				draw_text(s, s->menuwin, tx, ty, display_text, 1);
+#else
 				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = cur * high + font->ascent + 1;
 				XDrawString(dpy, s->menuwin, s->menu_highlight_text_gc, tx, ty, display_text, strlen(display_text));
+#endif
 			}
 			break;
 		case Expose:
@@ -241,11 +336,19 @@ menuhit(XButtonEvent * e, Menu * m)
 				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
 				
 				/* Center all text */
+#ifdef XFT
+				tx = (wide - get_text_width(display_text)) / 2;
+				ty = i * high + get_font_ascent() + 1;
+				printf("[MENU DEBUG] Drawing item %d: '%s' at (%d,%d) using %s\n", 
+				       i, display_text, tx, ty, use_xft ? "Xft" : "GC");
+				draw_text(s, s->menuwin, tx, ty, display_text, 0);
+#else
 				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = i * high + font->ascent + 1;
 				printf("[MENU DEBUG] Drawing item %d: '%s' at (%d,%d) using GC %p\n", 
 				       i, display_text, tx, ty, (void*)s->text_gc);
 				XDrawString(dpy, s->menuwin, s->text_gc, tx, ty, display_text, strlen(display_text));
+#endif
 			}
 			if (cur >= 0 && cur < n) {
 				/* Draw highlighted item */
@@ -260,9 +363,15 @@ menuhit(XButtonEvent * e, Menu * m)
 				display_text = prepare_menu_text(item, text_buffer, sizeof(text_buffer));
 				
 				/* Center all text */
+#ifdef XFT
+				tx = (wide - get_text_width(display_text)) / 2;
+				ty = cur * high + get_font_ascent() + 1;
+				draw_text(s, s->menuwin, tx, ty, display_text, 1);
+#else
 				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = cur * high + font->ascent + 1;
 				XDrawString(dpy, s->menuwin, s->menu_highlight_text_gc, tx, ty, display_text, strlen(display_text));
+#endif
 			}
 			drawn = 1;
 		}

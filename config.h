@@ -103,6 +103,7 @@ int config_parse_color(const char *colorstr, unsigned long *pixel, Colormap cmap
 
 /* Font loading helpers */
 XFontStruct* config_load_font(const char *requested_font);
+int config_load_font_hybrid(const char *requested_font);
 
 /* Terminal detection helpers */
 int is_terminal_class(const char *class_name);

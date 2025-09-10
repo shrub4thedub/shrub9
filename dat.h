@@ -2,6 +2,11 @@
  * Copyright multiple authors, see README for licence details
  */
 
+#ifdef XFT
+#include <X11/Xft/Xft.h>
+#include <fontconfig/fontconfig.h>
+#endif
+
 #define BORDER		_border
 #define	INSET		_inset
 #define MAXHIDDEN	32
@@ -97,6 +102,11 @@ struct ScreenInfo {
 	GC		text_gc;
 	GC		menu_highlight_gc;
 	GC		menu_highlight_text_gc;
+#ifdef XFT
+	XftDraw		*xft_draw;
+	XftColor	xft_color;
+	XftColor	xft_highlight_color;
+#endif
 	unsigned long	black;
 	unsigned long	white;
 	unsigned long	active;
@@ -125,6 +135,10 @@ extern ScreenInfo	*screens;
 extern int		num_screens;
 extern int		initting;
 extern XFontStruct	*font;
+#ifdef XFT
+extern XftFont		*xft_font;
+extern int		use_xft;
+#endif
 extern int 		curs;
 extern char		**myargv;
 extern Bool 		shape;

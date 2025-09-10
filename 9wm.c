@@ -28,6 +28,10 @@ Display *dpy;
 ScreenInfo *screens;
 int initting;
 XFontStruct *font;
+#ifdef XFT
+XftFont *xft_font = NULL;
+int use_xft = 0;
+#endif
 int curs;
 int border;
 char **myargv;
@@ -228,12 +232,18 @@ main(int argc, char *argv[])
 
 	if (fname != 0) {
 		printf("[MAIN DEBUG] Loading command-line font: %s\n", fname);
-		font = config_load_font(fname);
-		if (font == 0)
+		if (!config_load_font_hybrid(fname)) {
 			fprintf(stderr, "shrub9: warning: can't load font %s\n", fname);
+		}
 	}
 
-	if (font == 0) {
+	if (font == 0 && 
+#ifdef XFT
+	    xft_font == NULL
+#else
+	    1
+#endif
+	    ) {
 		/* Try to add local fonts directory to X font path */
 		char local_fonts_dir[512];
 		struct passwd *pw = getpwuid(getuid());
@@ -278,15 +288,25 @@ main(int argc, char *argv[])
 		}
 		
 		printf("[MAIN DEBUG] Loading config font: %s\n", config.font);
-		font = config_load_font(config.font);
-		if (font == 0) {
+		if (!config_load_font_hybrid(config.font)) {
 			fprintf(stderr, "shrub9: fatal: cannot load any font\n");
 			exit(1);
 		}
 	}
 	
-	printf("[MAIN DEBUG] Final font loaded - ascent: %d, descent: %d\n", 
-	       font ? font->ascent : 0, font ? font->descent : 0);
+	printf("[MAIN DEBUG] Final font loaded:\n");
+#ifdef XFT
+	if (use_xft && xft_font) {
+		printf("[MAIN DEBUG]   Using Xft font - ascent: %d, descent: %d\n", 
+		       xft_font->ascent, xft_font->descent);
+	} else
+#endif
+	if (font) {
+		printf("[MAIN DEBUG]   Using core font - ascent: %d, descent: %d\n", 
+		       font->ascent, font->descent);
+	} else {
+		printf("[MAIN DEBUG]   ERROR: No font loaded!\n");
+	}
 	_border = config.border_width;
 	_inset = config.inset_width;
 	
@@ -425,8 +445,13 @@ initscreen(ScreenInfo * s, int i)
 	gv.line_width = 0;
 	gv.subwindow_mode = IncludeInferiors;
 	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
+#ifdef XFT
+	if (use_xft) {
+		printf("[GC DEBUG] Using Xft rendering, not setting core font on GC for screen %d\n", s->num);
+	} else
+#endif
 	if (font != 0) {
-		printf("[GC DEBUG] Setting font ID %ld in text GC for screen %d\n", font->fid, s->num);
+		printf("[GC DEBUG] Setting core font ID %ld in text GC for screen %d\n", font->fid, s->num);
 		gv.font = font->fid;
 		mask |= GCFont;
 	} else {
@@ -450,11 +475,48 @@ initscreen(ScreenInfo * s, int i)
 	gv.line_width = 0;
 	gv.subwindow_mode = IncludeInferiors;
 	mask = GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
+#ifdef XFT
+	if (!use_xft)
+#endif
 	if (font != 0) {
 		gv.font = font->fid;
 		mask |= GCFont;
 	}
 	s->menu_highlight_text_gc = XCreateGC(dpy, s->root, mask, &gv);
+
+#ifdef XFT
+	/* Initialize Xft drawing context and colors */
+	if (use_xft) {
+		s->xft_draw = XftDrawCreate(dpy, s->menuwin, DefaultVisual(dpy, i), s->def_cmap);
+		if (!s->xft_draw) {
+			printf("[XFT DEBUG] Failed to create XftDraw for screen %d\n", s->num);
+		} else {
+			/* Set up Xft colors using proper color querying */
+			XColor xcolor;
+			XRenderColor render_color;
+			
+			/* Normal text color */
+			xcolor.pixel = s->menu_fg;
+			XQueryColor(dpy, s->def_cmap, &xcolor);
+			render_color.red = xcolor.red;
+			render_color.green = xcolor.green;
+			render_color.blue = xcolor.blue;
+			render_color.alpha = 0xFFFF;
+			XftColorAllocValue(dpy, DefaultVisual(dpy, i), s->def_cmap, &render_color, &s->xft_color);
+			
+			/* Highlight text color */
+			xcolor.pixel = s->menu_bg;
+			XQueryColor(dpy, s->def_cmap, &xcolor);
+			render_color.red = xcolor.red;
+			render_color.green = xcolor.green;
+			render_color.blue = xcolor.blue;
+			render_color.alpha = 0xFFFF;
+			XftColorAllocValue(dpy, DefaultVisual(dpy, i), s->def_cmap, &render_color, &s->xft_highlight_color);
+			
+			printf("[XFT DEBUG] Created XftDraw and colors for screen %d\n", s->num);
+		}
+	}
+#endif
 
 	initcurs(s);
 
@@ -618,7 +680,20 @@ cleanup(void)
 			XFreeGC(dpy, screens[i].gc);
 		if (screens[i].text_gc != None)
 			XFreeGC(dpy, screens[i].text_gc);
+#ifdef XFT
+		if (screens[i].xft_draw) {
+			XftColorFree(dpy, DefaultVisual(dpy, screens[i].num), screens[i].def_cmap, &screens[i].xft_color);
+			XftColorFree(dpy, DefaultVisual(dpy, screens[i].num), screens[i].def_cmap, &screens[i].xft_highlight_color);
+			XftDrawDestroy(screens[i].xft_draw);
+		}
+#endif
 	}
+	
+#ifdef XFT
+	if (xft_font) {
+		XftFontClose(dpy, xft_font);
+	}
+#endif
 	
 	XCloseDisplay(dpy);
 }

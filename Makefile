@@ -1,5 +1,5 @@
-CFLAGS += -DSHAPE -DCOLOR -Wall -pedantic -ansi -D_XOPEN_SOURCE
-LDLIBS = -lXext -lX11
+CFLAGS += -DSHAPE -DCOLOR -DXFT -Wall -pedantic -ansi -D_XOPEN_SOURCE -I/usr/include/freetype2
+LDLIBS = -lXext -lX11 -lXft -lfontconfig
 PREFIX ?= /usr
 BIN = $(DESTDIR)$(PREFIX)/bin
 
