@@ -148,6 +148,8 @@ main(int argc, char *argv[])
 				curs = 1;
 			else if (strcmp(argv[i],"blit") == 0)
 				curs = 2;
+			else if (strcmp(argv[i],"classic") == 0)
+				curs = 3;
 		} else if ( (strcmp(argv[i], "-active") == 0 || strcmp(argv[i], "-inactive") == 0) && i + 1 < argc) {
 #ifdef COLOR
 			if(argv[i][1] == 'a')
@@ -184,6 +186,18 @@ main(int argc, char *argv[])
 	if (!config_init()) {
 		fprintf(stderr, "shrub9: warning: failed to load configuration, using defaults\n");
 		config_load_default();
+	}
+
+	/* Apply cursor style from config if not set by command line */
+	if (curs == 0) { /* Only apply if not already set by -cursor command line arg */
+		if (strcmp(config.cursor_style, "v1") == 0) {
+			curs = 1;
+		} else if (strcmp(config.cursor_style, "blit") == 0) {
+			curs = 2;
+		} else if (strcmp(config.cursor_style, "classic") == 0) {
+			curs = 3;
+		}
+		/* else keep curs = 0 for "modern" or unrecognized values */
 	}
 
 	initting = 1;

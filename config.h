@@ -128,6 +128,6 @@ int is_terminal_class(const char *class_name);
 #define DEFAULT_ROUNDING_RADIUS 8
 #define DEFAULT_LOWER 0
 #define DEFAULT_TERMINAL_LAUNCHER_MODE 1
-#define DEFAULT_TERMINAL_CLASSES "alacritty,xterm,urxvt,kitty,gnome-terminal,xfce4-terminal,konsole"
+#define DEFAULT_TERMINAL_CLASSES "st,st-256color,alacritty,xterm,urxvt,kitty,gnome-terminal,xfce4-terminal,konsole"
 
 #endif /* CONFIG_H */
