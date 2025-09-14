@@ -10,6 +10,7 @@
 
 #define CONFIG_MAX_STRING 256
 #define CONFIG_MAX_MENU_ITEMS 32
+#define CONFIG_MAX_SUBMENU_ITEMS 16
 #define CONFIG_MAX_WORKSPACES 10
 #define CONFIG_MAX_KEYBINDS 64
 
@@ -29,6 +30,9 @@ struct KeyBind {
 struct MenuConfig {
 	char label[CONFIG_MAX_STRING];
 	char command[CONFIG_MAX_STRING];
+	int is_folder;
+	int submenu_count;
+	struct MenuConfig *submenu_items;
 };
 
 struct WorkspaceConfig {
@@ -57,9 +61,6 @@ struct Config {
 	char terminal[CONFIG_MAX_STRING];
 	char cursor_style[CONFIG_MAX_STRING];
 	
-	/* Rounding */
-	int rounding;
-	int rounding_radius;
 	
 	/* Terminal-launcher */
 	int terminal_launcher_mode;
@@ -76,6 +77,10 @@ struct Config {
 	/* Wallpaper */
 	char wallpaper_path[CONFIG_MAX_STRING];
 	int wallpaper_enabled;
+	
+	/* Plumber */
+	int plumb_enabled;
+	char plumb_send_path[CONFIG_MAX_STRING];
 	
 	/* Keybindings */
 	KeyBind keybinds[CONFIG_MAX_KEYBINDS];
@@ -124,10 +129,10 @@ int is_terminal_class(const char *class_name);
 #define DEFAULT_TITLEBAR_HEIGHT 18
 #define DEFAULT_TITLEBAR_BG_COLOR "#cccccc"
 #define DEFAULT_TITLEBAR_FG_COLOR "#000000"
-#define DEFAULT_ROUNDING 0
-#define DEFAULT_ROUNDING_RADIUS 8
 #define DEFAULT_LOWER 0
 #define DEFAULT_TERMINAL_LAUNCHER_MODE 1
 #define DEFAULT_TERMINAL_CLASSES "st,st-256color,alacritty,xterm,urxvt,kitty,gnome-terminal,xfce4-terminal,konsole"
+#define DEFAULT_PLUMB_ENABLED 0
+#define DEFAULT_PLUMB_SEND_PATH "/mnt/plumb/send"
 
 #endif /* CONFIG_H */

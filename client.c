@@ -12,7 +12,6 @@
 #include "workspace.h"
 #include "config.h"
 
-static void draw_rounded_border(Client *c, int active);
 
 
 Client *clients;
@@ -118,22 +117,14 @@ destroy_titlebar(Client * c)
 void
 draw_border(Client * c, int active)
 {
-	if (config.rounding && config.rounding_radius > 0) {
-		/* For rounded windows, draw custom rounded background */
-		draw_rounded_border(c, active);
-	} else {
-		/* Regular rectangular border */
-		XSetWindowBackground(dpy, c->parent, active ? c->screen->active : c->screen->inactive);
-		XClearWindow(dpy, c->parent);
-		
-		if (c->hold && active) {
-			XDrawRectangle(dpy, c->parent, c->screen->gc, INSET, INSET, 
-				c->dx + BORDER - INSET, c->dy + BORDER - INSET);
-		}
-	}
+	/* Regular rectangular border */
+	XSetWindowBackground(dpy, c->parent, active ? c->screen->active : c->screen->inactive);
+	XClearWindow(dpy, c->parent);
 	
-	/* Reapply rounding after drawing */
-	apply_window_rounding(c);
+	if (c->hold && active) {
+		XDrawRectangle(dpy, c->parent, c->screen->gc, INSET, INSET, 
+			c->dx + BORDER - INSET, c->dy + BORDER - INSET);
+	}
 	
 	/* Draw titlebar if enabled */
 	if (config.show_titlebars) {
@@ -362,89 +353,3 @@ dump_clients(void)
 }
 #endif
 
-static void
-draw_rounded_border(Client *c, int active)
-{
-	unsigned long bg_color = active ? c->screen->active : c->screen->inactive;
-	int width = c->dx + 2 * (BORDER - 1);
-	int height = c->dy + 2 * (BORDER - 1);
-	int radius = config.rounding_radius;
-	GC bg_gc;
-	XGCValues gcv;
-	
-	if (config.show_titlebars) {
-		height += config.titlebar_height;
-	}
-	
-	/* Create GC for background drawing */
-	gcv.foreground = bg_color;
-	bg_gc = XCreateGC(dpy, c->parent, GCForeground, &gcv);
-	
-	/* Clear the window first */
-	XClearWindow(dpy, c->parent);
-	
-	/* Draw rounded background */
-	if (radius * 2 <= width && radius * 2 <= height && radius > 0) {
-		/* Draw the main rectangles for background */
-		XFillRectangle(dpy, c->parent, bg_gc, radius, 0, width - 2 * radius, height);
-		XFillRectangle(dpy, c->parent, bg_gc, 0, radius, width, height - 2 * radius);
-		
-		/* Draw rounded corners for background */
-		XFillArc(dpy, c->parent, bg_gc, 0, 0, radius * 2, radius * 2, 90 * 64, 90 * 64);
-		XFillArc(dpy, c->parent, bg_gc, width - radius * 2, 0, radius * 2, radius * 2, 0 * 64, 90 * 64);
-		XFillArc(dpy, c->parent, bg_gc, 0, height - radius * 2, radius * 2, radius * 2, 180 * 64, 90 * 64);
-		XFillArc(dpy, c->parent, bg_gc, width - radius * 2, height - radius * 2, radius * 2, radius * 2, 270 * 64, 90 * 64);
-		
-		/* Only draw border outline when window is held (like original behavior) */
-		if (c->hold && active) {
-			XGCValues border_gcv;
-			GC border_gc;
-			int border_inset = 1;
-			int inner_radius;
-			
-			border_gcv.foreground = c->screen->black;
-			border_gc = XCreateGC(dpy, c->parent, GCForeground, &border_gcv);
-			
-			/* Draw a simple inset rounded border */
-			inner_radius = radius - border_inset;
-			if (inner_radius > 0) {
-				/* Draw corner arcs only */
-				XDrawArc(dpy, c->parent, border_gc, border_inset, border_inset, 
-					inner_radius * 2, inner_radius * 2, 90 * 64, 90 * 64);
-				XDrawArc(dpy, c->parent, border_gc, width - inner_radius * 2 - border_inset, border_inset, 
-					inner_radius * 2, inner_radius * 2, 0 * 64, 90 * 64);
-				XDrawArc(dpy, c->parent, border_gc, border_inset, height - inner_radius * 2 - border_inset, 
-					inner_radius * 2, inner_radius * 2, 180 * 64, 90 * 64);
-				XDrawArc(dpy, c->parent, border_gc, width - inner_radius * 2 - border_inset, height - inner_radius * 2 - border_inset, 
-					inner_radius * 2, inner_radius * 2, 270 * 64, 90 * 64);
-				
-				/* Connect the arcs with straight lines */
-				XDrawLine(dpy, c->parent, border_gc, inner_radius + border_inset, border_inset, 
-					width - inner_radius - border_inset, border_inset);
-				XDrawLine(dpy, c->parent, border_gc, inner_radius + border_inset, height - border_inset - 1, 
-					width - inner_radius - border_inset, height - border_inset - 1);
-				XDrawLine(dpy, c->parent, border_gc, border_inset, inner_radius + border_inset, 
-					border_inset, height - inner_radius - border_inset);
-				XDrawLine(dpy, c->parent, border_gc, width - border_inset - 1, inner_radius + border_inset, 
-					width - border_inset - 1, height - inner_radius - border_inset);
-			}
-			
-			XFreeGC(dpy, border_gc);
-		}
-	} else {
-		/* Fallback to regular rectangle */
-		XFillRectangle(dpy, c->parent, bg_gc, 0, 0, width, height);
-		
-		/* Draw regular border if held */
-		if (c->hold && active) {
-			XGCValues border_gcv;
-			GC border_gc;
-			border_gcv.foreground = c->screen->black;
-			border_gc = XCreateGC(dpy, c->parent, GCForeground, &border_gcv);
-			XDrawRectangle(dpy, c->parent, border_gc, INSET, INSET, width - 2 * INSET, height - 2 * INSET);
-			XFreeGC(dpy, border_gc);
-		}
-	}
-	
-	XFreeGC(dpy, bg_gc);
-}

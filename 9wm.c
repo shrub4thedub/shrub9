@@ -19,6 +19,7 @@
 #include "config.h"
 #include "workspace.h"
 #include "spaces.h"
+#include "plumb.h"
 
 char *version[] = {
 	"shrub9 version 1.0.0, Copyright (c) 2025 shrub (based on 9wm)", 0,
@@ -339,6 +340,7 @@ main(int argc, char *argv[])
 		termprog = config.terminal;
 		
 	workspace_init(config.workspaces.count);
+	plumb_init();
 	rebuild_menu();
 
 	for (i = 0; i < num_screens; i++) {
@@ -542,6 +544,11 @@ initscreen(ScreenInfo * s, int i)
 	XSync(dpy, False);
 
 	s->menuwin = XCreateSimpleWindow(dpy, s->root, 0, 0, 1, 1, 1, s->menu_fg, s->menu_bg);
+	s->submenuwin = XCreateSimpleWindow(dpy, s->root, 0, 0, 1, 1, 1, s->menu_fg, s->menu_bg);
+	
+	/* Set override redirect on submenu to prevent WM interference */
+	attr.override_redirect = True;
+	XChangeWindowAttributes(dpy, s->submenuwin, CWOverrideRedirect, &attr);
 }
 
 ScreenInfo *

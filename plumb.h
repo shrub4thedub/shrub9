@@ -34,6 +34,7 @@ struct PlumbMsg {
 /* Global plumber state */
 extern int plumb_enabled;
 extern int plumb_fd;
+extern time_t plumb_pending_until;
 
 /* Function prototypes */
 int plumb_init(void);
@@ -41,6 +42,8 @@ void plumb_cleanup(void);
 int plumb_send_text(const char *text, Client *c);
 char* plumb_get_selection(Client *c, int x, int y);
 int plumb_handle_selection(Client *c, int x, int y);
+int plumb_window_pending(void);
+int plumb_is_image_viewer(Client *c);
 PlumbMsg* plumb_msg_new(void);
 void plumb_msg_free(PlumbMsg *m);
 void plumb_attr_add(PlumbMsg *m, const char *name, const char *value);

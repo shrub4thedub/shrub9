@@ -6,8 +6,8 @@ BIN = $(DESTDIR)$(PREFIX)/bin
 MANDIR = $(DESTDIR)$(PREFIX)/share/man/man1
 MANSUFFIX = 1
 
-OBJS = 9wm.o event.o manage.o menu.o client.o grab.o cursor.o error.o config.o workspace.o spaces.o
-HFILES = dat.h fns.h config.h workspace.h spaces.h
+OBJS = 9wm.o event.o manage.o menu.o client.o grab.o cursor.o error.o config.o workspace.o spaces.o plumb.o
+HFILES = dat.h fns.h config.h workspace.h spaces.h plumb.h
 
 all: shrub9
 

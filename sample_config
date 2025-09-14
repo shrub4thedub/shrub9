@@ -4,7 +4,6 @@
 # everything disabled - if you want new features, work for them!
 workspace_count = 1
 show_titlebars = 0
-rounding = 0
 wallpaper_enabled = 0
 terminal_launcher_mode = 0
 
@@ -37,9 +36,7 @@ terminal = xterm
 # titlebar_height = 18
 # titlebar_bg_color = #cccccc
 # titlebar_fg_color = black
-# rounding = 0
-# rounding_radius = 0
-
+# 
 # Wallpaper 
 # wallpaper_enabled = 1
 # wallpaper = /path/to/your/wallpaper.jpg

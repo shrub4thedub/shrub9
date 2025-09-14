@@ -12,13 +12,12 @@
 #include "fns.h"
 #include "config.h"
 
-static void apply_menu_rounding(Window menuwin, int width, int height);
 static char* prepare_menu_text(const char* original, char* buffer, int buffer_size);
 
 #ifdef XFT
-static int get_text_width(const char* text);
-static int get_font_ascent(void);
-static int get_font_descent(void);
+int get_text_width(const char* text);
+int get_font_ascent(void);
+int get_font_descent(void);
 static void draw_text(ScreenInfo *s, Window win, int x, int y, const char* text, int highlight);
 #endif
 
@@ -45,7 +44,7 @@ prepare_menu_text(const char* original, char* buffer, int buffer_size)
 }
 
 #ifdef XFT
-static int
+int
 get_text_width(const char* text)
 {
 	if (use_xft && xft_font) {
@@ -58,7 +57,7 @@ get_text_width(const char* text)
 	return 0;
 }
 
-static int
+int
 get_font_ascent(void)
 {
 	if (use_xft && xft_font) {
@@ -69,7 +68,7 @@ get_font_ascent(void)
 	return 0;
 }
 
-static int
+int
 get_font_descent(void)
 {
 	if (use_xft && xft_font) {
@@ -143,6 +142,9 @@ menuhit(XButtonEvent * e, Menu * m)
 	int i, n, cur, old, wide, high, status, drawn, warp;
 	int x, y, dx, dy, xmax, ymax;
 	int tx, ty;
+	int submenu_active = -1, in_submenu = 0, submenu_cur = -1;
+	Time submenu_hide_time = 0;  /* When to hide submenu (0 = don't hide) */
+	const int SUBMENU_DELAY_MS = 250;  /* 250ms delay before hiding */
 	ScreenInfo *s;
 
 #ifdef XFT
@@ -150,19 +152,15 @@ menuhit(XButtonEvent * e, Menu * m)
 #else
 	if (font == 0) {
 #endif
-		printf("[MENU DEBUG] ERROR: No font available for menu rendering\n");
+		/* ERROR: No font available for menu rendering */;
 		return -1;
 	}
 	
 #ifdef XFT
 	if (use_xft && xft_font) {
-		printf("[MENU DEBUG] Menu using Xft font - ascent: %d, descent: %d\n", 
-		       xft_font->ascent, xft_font->descent);
 	} else
 #endif
 	if (font) {
-		printf("[MENU DEBUG] Menu using core font - ascent: %d, descent: %d\n", 
-		       font->ascent, font->descent);
 	}
 	s = getscreen(e->root);
 	if (s == 0 || e->window == s->menuwin)	/* ugly event mangling */
@@ -219,10 +217,6 @@ menuhit(XButtonEvent * e, Menu * m)
 	XMoveResizeWindow(dpy, s->menuwin, x, y, dx, dy);
 	XSelectInput(dpy, s->menuwin, MenuMask);
 	
-	/* Apply rounding to menu if enabled */
-	if (config.rounding && config.rounding_radius > 0) {
-		apply_menu_rounding(s->menuwin, dx, dy);
-	}
 	
 	XMapRaised(dpy, s->menuwin);
 	status = grab(s->menuwin, None, MenuGrabMask, None, e->time);
@@ -236,6 +230,52 @@ menuhit(XButtonEvent * e, Menu * m)
 	drawn = 0;
 	for (;;) {
 		XMaskEvent(dpy, MenuMask, &ev);
+		
+		/* Check if submenu hide timer has expired */
+		if (submenu_hide_time > 0) {
+			Time current_time = 0;
+			/* Get current time from the event */
+			switch (ev.type) {
+			case ButtonPress:
+			case ButtonRelease:
+				current_time = ev.xbutton.time;
+				break;
+			case MotionNotify:
+				current_time = ev.xmotion.time;
+				break;
+			default:
+				current_time = CurrentTime;
+				break;
+			}
+			
+			if (current_time != CurrentTime && current_time >= submenu_hide_time) {
+				/* Before hiding, check if mouse is actually over submenu */
+				Window root_return, child_return;
+				int root_x, root_y, win_x, win_y;
+				unsigned int mask;
+				
+				if (XQueryPointer(dpy, s->root, &root_return, &child_return,
+				                 &root_x, &root_y, &win_x, &win_y, &mask)) {
+					
+					/* Use stored absolute coordinates for comparison */
+					if (root_x >= s->submenu_x && root_x < s->submenu_x + (int)s->submenu_w &&
+					    root_y >= s->submenu_y && root_y < s->submenu_y + (int)s->submenu_h) {
+						/* Mouse is over submenu - don't hide, reset timer */
+						submenu_hide_time = current_time + SUBMENU_DELAY_MS;
+					} else if (child_return == s->submenuwin) {
+						/* XQueryPointer says mouse is in submenu window */
+						submenu_hide_time = current_time + SUBMENU_DELAY_MS;
+					} else {
+						/* Mouse is not over submenu - hide it */
+						hide_submenu_for(s);
+						submenu_active = -1;
+						in_submenu = 0;
+						submenu_hide_time = 0;
+					}
+				}
+			}
+		}
+		
 		switch (ev.type) {
 		default:
 			fprintf(stderr, "9wm: menuhit: unknown ev.type %d\n", ev.type);
@@ -258,22 +298,167 @@ menuhit(XButtonEvent * e, Menu * m)
 				m->lasthit = i;
 			if (!nobuttons(&ev.xbutton))
 				i = -1;
+			
+			/* Check if click was on submenu window or submenu area */
+			if (submenu_active >= 0 && (ev.xbutton.window == s->submenuwin || 
+			    (in_submenu && submenu_cur >= 0))) {
+				/* Click was on submenu - handle submenu selection */
+				int sub_result = -1;
+				int sub_item_height;
+				
+#ifdef XFT
+				sub_item_height = get_font_ascent() + get_font_descent() + 1;
+#else
+				sub_item_height = font->ascent + font->descent + 1;
+#endif
+				
+				/* Calculate which submenu item was clicked */
+				if (ev.xbutton.window == s->submenuwin) {
+					/* Direct click on submenu window */
+					sub_result = ev.xbutton.y / sub_item_height;
+				} else {
+					/* Click through main menu while over submenu - use tracked position */
+					sub_result = submenu_cur;
+				}
+				
+				/* Validate submenu item selection */
+				if (sub_result >= 0 && sub_result < config.menu_items[submenu_active].submenu_count) {
+					ungrab(&ev.xbutton);
+					XUnmapWindow(dpy, s->menuwin);
+					hide_submenu_for(s);
+					
+					/* Return encoded submenu result: 1000 + (parent_index * 100) + sub_index */
+					return 1000 + (submenu_active * 100) + sub_result;
+				} else {
+					/* Invalid click area - ignore */
+					break;
+				}
+			}
+			
 			ungrab(&ev.xbutton);
 			XUnmapWindow(dpy, s->menuwin);
+			hide_submenu_for(s);
 			return i;
 		case MotionNotify:
 			if (!drawn)
 				break;
-			x = ev.xbutton.x;
-			y = ev.xbutton.y;
+			
+			/* Check if motion is over submenu window */
+			if (submenu_active >= 0 && ev.xmotion.window == s->submenuwin) {
+				/* Mouse is over submenu - cancel hide timer and set submenu state */
+				submenu_hide_time = 0;
+				cur = submenu_active;
+				in_submenu = 1;
+				
+				/* Calculate which submenu item is hovered for future highlighting */
+				int sub_item_height;
+#ifdef XFT
+				sub_item_height = get_font_ascent() + get_font_descent() + 1;
+#else
+				sub_item_height = font->ascent + font->descent + 1;
+#endif
+				int new_submenu_cur = ev.xmotion.y / sub_item_height;
+				if (new_submenu_cur < 0 || new_submenu_cur >= config.menu_items[submenu_active].submenu_count) {
+					new_submenu_cur = -1;
+				}
+				
+				/* Trigger redraw if submenu selection changed */
+				if (new_submenu_cur != submenu_cur) {
+					submenu_cur = new_submenu_cur;
+					/* Trigger expose event to redraw submenu with new highlighting */
+					XClearArea(dpy, s->submenuwin, 0, 0, 0, 0, True);
+				}
+				
+				old = cur; /* Prevent unnecessary updates */
+				break;
+			}
+			
+			x = ev.xmotion.x;
+			y = ev.xmotion.y;
 			old = cur;
 			cur = y / high;
 			if (old >= 0 && y >= old * high - 3 && y < (old + 1) * high + 3)
 				cur = old;
-			if (x < 0 || x > wide || y < -3)
-				cur = -1;
+			
+			/* Reset submenu state when over main menu */
+			in_submenu = 0;
+			/* Check if mouse is outside main menu */
+			if (x < 0 || x > wide || y < -3) {
+				/* If outside main menu, check if we're over the submenu */
+				if (submenu_active >= 0) {
+					/* Convert mouse coordinates to root coordinates */
+					Window child;
+					int root_x, root_y;
+					XTranslateCoordinates(dpy, s->menuwin, s->root, x, y, &root_x, &root_y, &child);
+					
+					/* Check if mouse is over submenu using stored coordinates */
+					if (root_x >= s->submenu_x && root_x < s->submenu_x + (int)s->submenu_w &&
+					    root_y >= s->submenu_y && root_y < s->submenu_y + (int)s->submenu_h) {
+						/* Mouse is over submenu - keep current state and cancel hide timer */
+						cur = submenu_active;
+						in_submenu = 1;
+						submenu_hide_time = 0;  /* Cancel hide timer */
+						
+						/* Calculate which submenu item is hovered */
+						int sub_item_height;
+#ifdef XFT
+						sub_item_height = get_font_ascent() + get_font_descent() + 1;
+#else
+						sub_item_height = font->ascent + font->descent + 1;
+#endif
+						/* Calculate submenu item based on position relative to submenu window */
+						int new_submenu_cur = (root_y - s->submenu_y) / sub_item_height;
+						if (new_submenu_cur < 0 || new_submenu_cur >= config.menu_items[submenu_active].submenu_count) {
+							new_submenu_cur = -1;
+						}
+						
+						/* Trigger redraw if submenu selection changed */
+						if (new_submenu_cur != submenu_cur) {
+							submenu_cur = new_submenu_cur;
+							/* Trigger expose event to redraw submenu with new highlighting */
+							XClearArea(dpy, s->submenuwin, 0, 0, 0, 0, True);
+						}
+					} else {
+						/* Mouse is outside both menus */
+						cur = -1;
+						submenu_cur = -1;
+					}
+				} else {
+					cur = -1;
+				}
+			}
 			else if (cur < 0 || cur >= n)
 				cur = -1;
+			/* Handle submenu hover logic */
+			if (cur != old) {
+				/* Handle submenu timing when moving to different item */
+				if (submenu_active != cur && !in_submenu) {
+					if (submenu_active >= 0) {
+						/* Start hide timer instead of immediately hiding */
+						submenu_hide_time = ev.xmotion.time + SUBMENU_DELAY_MS;
+					}
+				} else if (submenu_active == cur) {
+					/* Mouse returned to folder item - cancel hide timer */
+					submenu_hide_time = 0;
+				}
+				
+				/* Show submenu for folder items */
+				if (cur >= 0 && cur < config.menu_count && 
+				    config.menu_items[cur].is_folder) {
+					/* Get actual menu window position */
+					Window root_return;
+					int menu_x, menu_y;
+					unsigned int menu_width, menu_height, border_width, depth;
+					
+					XGetGeometry(dpy, s->menuwin, &root_return, &menu_x, &menu_y, 
+					            &menu_width, &menu_height, &border_width, &depth);
+					
+					
+					show_submenu_at(e, cur, s, menu_x, menu_y, menu_width, high);
+					submenu_active = cur;
+				}
+			}
+			
 			if (cur == old)
 				break;
 			if (old >= 0 && old < n) {
@@ -326,7 +511,80 @@ menuhit(XButtonEvent * e, Menu * m)
 			}
 			break;
 		case Expose:
-			XClearWindow(dpy, s->menuwin);
+			if (ev.xexpose.window == s->submenuwin && submenu_active >= 0) {
+				/* Handle submenu expose */
+				int sub_n, sub_wide, sub_high, sub_i, sub_tx, sub_ty;
+				char **sub_items;
+				
+				/* Build submenu if needed */
+				build_submenu_for_rendering(submenu_active);
+				sub_items = get_submenu_items();
+				
+				/* Calculate submenu dimensions */
+				sub_wide = 0;
+				for (sub_n = 0; sub_items[sub_n]; sub_n++) {
+#ifdef XFT
+					int item_width = get_text_width(sub_items[sub_n]) + 4;
+#else
+					int item_width = XTextWidth(font, sub_items[sub_n], strlen(sub_items[sub_n])) + 4;
+#endif
+					if (item_width > sub_wide)
+						sub_wide = item_width;
+				}
+				
+#ifdef XFT
+				sub_high = get_font_ascent() + get_font_descent() + 1;
+#else
+				sub_high = font->ascent + font->descent + 1;
+#endif
+				
+				XClearWindow(dpy, s->submenuwin);
+				for (sub_i = 0; sub_i < sub_n; sub_i++) {
+					char *sub_item = sub_items[sub_i];
+					char sub_text_buffer[256];
+					char *sub_display_text;
+					
+					/* Prepare text (with optional lowercase) */
+					sub_display_text = prepare_menu_text(sub_item, sub_text_buffer, sizeof(sub_text_buffer));
+					
+					/* Center all text */
+#ifdef XFT
+					sub_tx = (sub_wide - get_text_width(sub_display_text)) / 2;
+					sub_ty = sub_i * sub_high + get_font_ascent() + 1;
+					draw_text(s, s->submenuwin, sub_tx, sub_ty, sub_display_text, 0);
+#else
+					sub_tx = (sub_wide - XTextWidth(font, sub_display_text, strlen(sub_display_text))) / 2;
+					sub_ty = sub_i * sub_high + font->ascent + 1;
+					XDrawString(dpy, s->submenuwin, s->text_gc, sub_tx, sub_ty, sub_display_text, strlen(sub_display_text));
+#endif
+				}
+				
+				/* Draw highlighted submenu item if any */
+				if (submenu_cur >= 0 && submenu_cur < sub_n) {
+					char *sub_item = sub_items[submenu_cur];
+					char sub_text_buffer[256];
+					char *sub_display_text;
+					
+					/* Fill with blue background */
+					XFillRectangle(dpy, s->submenuwin, s->menu_highlight_gc, 0, submenu_cur * sub_high, sub_wide, sub_high);
+					
+					/* Prepare text (with optional lowercase) */
+					sub_display_text = prepare_menu_text(sub_item, sub_text_buffer, sizeof(sub_text_buffer));
+					
+					/* Center highlighted text */
+#ifdef XFT
+					sub_tx = (sub_wide - get_text_width(sub_display_text)) / 2;
+					sub_ty = submenu_cur * sub_high + get_font_ascent() + 1;
+					draw_text(s, s->submenuwin, sub_tx, sub_ty, sub_display_text, 1);
+#else
+					sub_tx = (sub_wide - XTextWidth(font, sub_display_text, strlen(sub_display_text))) / 2;
+					sub_ty = submenu_cur * sub_high + font->ascent + 1;
+					XDrawString(dpy, s->submenuwin, s->menu_highlight_text_gc, sub_tx, sub_ty, sub_display_text, strlen(sub_display_text));
+#endif
+				}
+			} else {
+				/* Handle main menu expose */
+				XClearWindow(dpy, s->menuwin);
 			for (i = 0; i < n; i++) {
 				char *item = m->item[i];
 				char text_buffer[256];
@@ -339,14 +597,10 @@ menuhit(XButtonEvent * e, Menu * m)
 #ifdef XFT
 				tx = (wide - get_text_width(display_text)) / 2;
 				ty = i * high + get_font_ascent() + 1;
-				printf("[MENU DEBUG] Drawing item %d: '%s' at (%d,%d) using %s\n", 
-				       i, display_text, tx, ty, use_xft ? "Xft" : "GC");
 				draw_text(s, s->menuwin, tx, ty, display_text, 0);
 #else
 				tx = (wide - XTextWidth(font, display_text, strlen(display_text))) / 2;
 				ty = i * high + font->ascent + 1;
-				printf("[MENU DEBUG] Drawing item %d: '%s' at (%d,%d) using GC %p\n", 
-				       i, display_text, tx, ty, (void*)s->text_gc);
 				XDrawString(dpy, s->menuwin, s->text_gc, tx, ty, display_text, strlen(display_text));
 #endif
 			}
@@ -372,6 +626,7 @@ menuhit(XButtonEvent * e, Menu * m)
 				ty = cur * high + font->ascent + 1;
 				XDrawString(dpy, s->menuwin, s->menu_highlight_text_gc, tx, ty, display_text, strlen(display_text));
 #endif
+			}
 			}
 			drawn = 1;
 		}
@@ -754,49 +1009,3 @@ sweep_area(ScreenInfo * s, int *x, int *y, int *width, int *height)
 	}
 }
 
-static void
-apply_menu_rounding(Window menuwin, int width, int height)
-{
-#ifdef SHAPE
-	Pixmap mask;
-	GC mask_gc;
-	int radius = config.rounding_radius;
-	
-	/* Don't round if radius is too big for the menu */
-	if (radius * 2 > width || radius * 2 > height || radius <= 0) {
-		return;
-	}
-	
-	/* Create a pixmap for the mask */
-	mask = XCreatePixmap(dpy, menuwin, width, height, 1);
-	mask_gc = XCreateGC(dpy, mask, 0, NULL);
-	
-	/* Clear the mask (make it transparent) */
-	XSetForeground(dpy, mask_gc, 0);
-	XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
-	
-	/* Draw the rounded rectangle shape (make it opaque) */
-	XSetForeground(dpy, mask_gc, 1);
-	
-	/* Draw rounded rectangle */
-	XFillRectangle(dpy, mask, mask_gc, radius, 0, width - 2 * radius, height);
-	XFillRectangle(dpy, mask, mask_gc, 0, radius, width, height - 2 * radius);
-	
-	/* Draw quarter circles for each corner */
-	/* Top-left corner */
-	XFillArc(dpy, mask, mask_gc, 0, 0, radius * 2, radius * 2, 90 * 64, 90 * 64);
-	/* Top-right corner */
-	XFillArc(dpy, mask, mask_gc, width - radius * 2, 0, radius * 2, radius * 2, 0 * 64, 90 * 64);
-	/* Bottom-left corner */
-	XFillArc(dpy, mask, mask_gc, 0, height - radius * 2, radius * 2, radius * 2, 180 * 64, 90 * 64);
-	/* Bottom-right corner */
-	XFillArc(dpy, mask, mask_gc, width - radius * 2, height - radius * 2, radius * 2, radius * 2, 270 * 64, 90 * 64);
-	
-	/* Apply the mask to the menu window */
-	XShapeCombineMask(dpy, menuwin, ShapeBounding, 0, 0, mask, ShapeSet);
-	
-	/* Clean up */
-	XFreeGC(dpy, mask_gc);
-	XFreePixmap(dpy, mask);
-#endif
-}

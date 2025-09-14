@@ -22,6 +22,7 @@
 
 typedef struct Client Client;
 typedef struct Menu Menu;
+typedef struct SubMenu SubMenu;
 typedef struct ScreenInfo ScreenInfo;
 
 struct Client {
@@ -93,10 +94,21 @@ struct Menu {
 	int	lasthit;
 };
 
+struct SubMenu {
+	Window	win;
+	Menu	menu;
+	int	visible;
+	int	x, y, w, h;
+	int	parent_item;
+};
+
 struct ScreenInfo {
 	int		num;
 	Window		root;
 	Window		menuwin;
+	Window		submenuwin;
+	int		submenu_x, submenu_y;
+	unsigned int	submenu_w, submenu_h;
 	Colormap	def_cmap;
 	GC		gc;
 	GC		text_gc;

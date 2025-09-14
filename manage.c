@@ -13,8 +13,8 @@
 #include "fns.h"
 #include "workspace.h"
 #include "config.h"
+#include "plumb.h"
 
-static void apply_rounded_shape(Client *c);
 
 static void check_terminal_launch(Client *c);
 static Client* find_candidate_terminal(Client *new_client);
@@ -148,10 +148,6 @@ manage(Client * c, int mapped)
 		XReparentWindow(dpy, c->window, c->parent, BORDER - 1, window_y);
 	}
 	
-	/* Apply rounded corners if enabled */
-	if (config.rounding && config.rounding_radius > 0) {
-		apply_rounded_shape(c);
-	}
 	
 #ifdef	SHAPE
 	if (shape) {
@@ -206,7 +202,7 @@ manage(Client * c, int mapped)
 	fprintf(stderr, "manage: FINAL - client %p has workspace=%d\n", (void*)c, c->workspace);
 	
 	/* Handle terminal-launcher relationships */
-	if (config.terminal_launcher_mode && !c->is_terminal) {
+	if (config.terminal_launcher_mode && !c->is_terminal && !plumb_is_image_viewer(c)) {
 		/* This is a non-terminal window - check if it was launched from a terminal */
 		check_terminal_launch(c);
 	}
@@ -632,6 +628,20 @@ check_terminal_launch(Client *c)
 	if (c->is_terminal || c->trans != None)
 		return;
 		
+	/* Don't process windows created by plumber */
+	if (plumb_window_pending()) {
+		fprintf(stderr, "manage: skipping terminal launcher for plumber window %s\n", 
+		        c->class ? c->class : "unknown");
+		return;
+	}
+	
+	/* Don't process image viewers (likely launched by plumber) */
+	if (plumb_is_image_viewer(c)) {
+		fprintf(stderr, "manage: skipping terminal launcher for image viewer %s\n", 
+		        c->class ? c->class : "unknown");
+		return;
+	}
+		
 	terminal = find_candidate_terminal(c);
 	if (terminal != NULL) {
 		/* Establish the relationship */
@@ -704,71 +714,3 @@ restore_terminal_from_child(Client *child)
 	top(terminal);
 }
 
-static void
-apply_rounded_shape(Client *c)
-{
-#ifdef SHAPE
-	Pixmap mask;
-	GC mask_gc;
-	int width, height;
-	int radius = config.rounding_radius;
-	
-	if (!c || c->parent == None || c->window == None) {
-		return; /* Safety check */
-	}
-	
-	width = c->dx + 2 * (BORDER - 1);
-	height = c->dy + 2 * (BORDER - 1);
-	if (config.show_titlebars) {
-		height += config.titlebar_height;
-	}
-	
-	/* Create a pixmap for the mask */
-	mask = XCreatePixmap(dpy, c->parent, width, height, 1);
-	mask_gc = XCreateGC(dpy, mask, 0, NULL);
-	
-	/* Clear the mask (make it transparent) */
-	XSetForeground(dpy, mask_gc, 0);
-	XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
-	
-	/* Draw the rounded rectangle shape (make it opaque) */
-	XSetForeground(dpy, mask_gc, 1);
-	
-	if (radius * 2 > width || radius * 2 > height || radius <= 0) {
-		/* Fallback to regular rectangle if radius is too big */
-		XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
-	} else {
-		/* Draw rounded rectangle */
-		XFillRectangle(dpy, mask, mask_gc, radius, 0, width - 2 * radius, height);
-		XFillRectangle(dpy, mask, mask_gc, 0, radius, width, height - 2 * radius);
-		
-		/* Draw quarter circles for each corner */
-		/* Top-left corner */
-		XFillArc(dpy, mask, mask_gc, 0, 0, radius * 2, radius * 2, 90 * 64, 90 * 64);
-		/* Top-right corner */
-		XFillArc(dpy, mask, mask_gc, width - radius * 2, 0, radius * 2, radius * 2, 0 * 64, 90 * 64);
-		/* Bottom-left corner */
-		XFillArc(dpy, mask, mask_gc, 0, height - radius * 2, radius * 2, radius * 2, 180 * 64, 90 * 64);
-		/* Bottom-right corner */
-		XFillArc(dpy, mask, mask_gc, width - radius * 2, height - radius * 2, radius * 2, radius * 2, 270 * 64, 90 * 64);
-	}
-	
-	/* Apply the mask to the window */
-	XShapeCombineMask(dpy, c->parent, ShapeBounding, 0, 0, mask, ShapeSet);
-	
-	/* Clean up */
-	XFreeGC(dpy, mask_gc);
-	XFreePixmap(dpy, mask);
-#endif
-}
-
-void
-apply_window_rounding(Client *c)
-{
-	if (!c || c->parent == None || c->window == None) {
-		return; /* Safety check - don't apply rounding to destroyed clients */
-	}
-	if (config.rounding && config.rounding_radius > 0) {
-		apply_rounded_shape(c);
-	}
-}

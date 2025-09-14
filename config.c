@@ -28,6 +28,8 @@ static KeySym parse_keysym(const char *key_str);
 static void config_set_defaults(void);
 static int ensure_config_dir(const char *path);
 static int create_default_config_file(const char *config_path);
+static void init_menu_item(MenuConfig *item);
+static void free_menu_item(MenuConfig *item);
 
 int
 config_init(void)
@@ -141,10 +143,6 @@ config_load(const char *path)
 			} else {
 				config.inset_width = inset_width;
 			}
-		} else if (strcmp(key, "rounding") == 0) {
-			config.rounding = atoi(value);
-		} else if (strcmp(key, "rounding_radius") == 0) {
-			config.rounding_radius = atoi(value);
 		} else if (strcmp(key, "lower") == 0) {
 			config.lower = atoi(value);
 		} else if (strcmp(key, "workspace_count") == 0) {
@@ -157,9 +155,46 @@ config_load(const char *path)
 			} else {
 				fprintf(stderr, "shrub9: config error at line %d: workspace_count exceeds maximum %d (got %d)\n", line_num, CONFIG_MAX_WORKSPACES, count);
 			}
+		} else if (strncmp(key, "menu_", 5) == 0 && strstr(key, "_sub_")) {
+			char *sub_ptr = strstr(key, "_sub_");
+			if (sub_ptr) {
+				int menu_idx = atoi(key + 5);
+				int sub_idx = atoi(sub_ptr + 5);
+				char *label_or_cmd = strchr(sub_ptr + 5, '_');
+				if (label_or_cmd && menu_idx >= 0 && menu_idx < CONFIG_MAX_MENU_ITEMS && 
+				    sub_idx >= 0 && sub_idx < CONFIG_MAX_SUBMENU_ITEMS) {
+				    
+					/* Ensure the parent is set up as a folder */
+					if (!config.menu_items[menu_idx].is_folder) {
+						config.menu_items[menu_idx].is_folder = 1;
+						config.menu_items[menu_idx].submenu_items = malloc(CONFIG_MAX_SUBMENU_ITEMS * sizeof(MenuConfig));
+						if (config.menu_items[menu_idx].submenu_items) {
+							int i;
+							for (i = 0; i < CONFIG_MAX_SUBMENU_ITEMS; i++) {
+								init_menu_item(&config.menu_items[menu_idx].submenu_items[i]);
+							}
+						}
+					}
+					
+					if (config.menu_items[menu_idx].submenu_items) {
+						if (strstr(label_or_cmd, "_label")) {
+							strncpy(config.menu_items[menu_idx].submenu_items[sub_idx].label, value, CONFIG_MAX_STRING - 1);
+							if (sub_idx >= config.menu_items[menu_idx].submenu_count) {
+								config.menu_items[menu_idx].submenu_count = sub_idx + 1;
+							}
+						} else if (strstr(label_or_cmd, "_command")) {
+							strncpy(config.menu_items[menu_idx].submenu_items[sub_idx].command, value, CONFIG_MAX_STRING - 1);
+						}
+					}
+				}
+			}
 		} else if (strncmp(key, "menu_", 5) == 0 && strstr(key, "_label")) {
 			int idx = atoi(key + 5);
 			if (idx >= 0 && idx < CONFIG_MAX_MENU_ITEMS) {
+				/* Only initialize if not already initialized */
+				if (config.menu_items[idx].label[0] == '\0') {
+					init_menu_item(&config.menu_items[idx]);
+				}
 				strncpy(config.menu_items[idx].label, value, CONFIG_MAX_STRING - 1);
 				if (idx >= config.menu_count)
 					config.menu_count = idx + 1;
@@ -170,6 +205,22 @@ config_load(const char *path)
 			int idx = atoi(key + 5);
 			if (idx >= 0 && idx < CONFIG_MAX_MENU_ITEMS) {
 				strncpy(config.menu_items[idx].command, value, CONFIG_MAX_STRING - 1);
+			} else {
+				fprintf(stderr, "shrub9: config error at line %d: menu index %d out of range (0-%d)\n", line_num, idx, CONFIG_MAX_MENU_ITEMS - 1);
+			}
+		} else if (strncmp(key, "menu_", 5) == 0 && strstr(key, "_folder")) {
+			int idx = atoi(key + 5);
+			if (idx >= 0 && idx < CONFIG_MAX_MENU_ITEMS) {
+				if (atoi(value)) {
+					config.menu_items[idx].is_folder = 1;
+					config.menu_items[idx].submenu_items = malloc(CONFIG_MAX_SUBMENU_ITEMS * sizeof(MenuConfig));
+					if (config.menu_items[idx].submenu_items) {
+						int i;
+						for (i = 0; i < CONFIG_MAX_SUBMENU_ITEMS; i++) {
+							init_menu_item(&config.menu_items[idx].submenu_items[i]);
+						}
+					}
+				}
 			} else {
 				fprintf(stderr, "shrub9: config error at line %d: menu index %d out of range (0-%d)\n", line_num, idx, CONFIG_MAX_MENU_ITEMS - 1);
 			}
@@ -194,6 +245,10 @@ config_load(const char *path)
 			config.wallpaper_enabled = 1;
 		} else if (strcmp(key, "wallpaper_enabled") == 0) {
 			config.wallpaper_enabled = atoi(value);
+		} else if (strcmp(key, "plumb_enabled") == 0) {
+			config.plumb_enabled = atoi(value);
+		} else if (strcmp(key, "plumb_send_path") == 0) {
+			strncpy(config.plumb_send_path, value, CONFIG_MAX_STRING - 1);
 		} else {
 			fprintf(stderr, "shrub9: unknown config key '%s' at line %d\n", key, line_num);
 		}
@@ -215,6 +270,10 @@ config_load_default(void)
 void
 config_free(void)
 {
+	int i;
+	for (i = 0; i < config.menu_count; i++) {
+		free_menu_item(&config.menu_items[i]);
+	}
 	memset(&config, 0, sizeof(config));
 }
 
@@ -508,6 +567,35 @@ config_load_font_hybrid(const char *requested_font)
 }
 
 static void
+init_menu_item(MenuConfig *item)
+{
+	if (!item) return;
+	
+	item->label[0] = '\0';
+	item->command[0] = '\0';
+	item->is_folder = 0;
+	item->submenu_count = 0;
+	item->submenu_items = NULL;
+}
+
+static void
+free_menu_item(MenuConfig *item)
+{
+	if (!item) return;
+	
+	if (item->submenu_items) {
+		int i;
+		for (i = 0; i < item->submenu_count; i++) {
+			free_menu_item(&item->submenu_items[i]);
+		}
+		free(item->submenu_items);
+		item->submenu_items = NULL;
+	}
+	item->submenu_count = 0;
+	item->is_folder = 0;
+}
+
+static void
 config_set_defaults(void)
 {
 	strncpy(config.active_color, DEFAULT_ACTIVE_COLOR, CONFIG_MAX_STRING - 1);
@@ -524,8 +612,6 @@ config_set_defaults(void)
 	config.border_width = DEFAULT_BORDER_WIDTH;
 	config.inset_width = DEFAULT_INSET_WIDTH;
 	
-	config.rounding = DEFAULT_ROUNDING;
-	config.rounding_radius = DEFAULT_ROUNDING_RADIUS;
 	
 	config.lower = DEFAULT_LOWER;
 	
@@ -540,17 +626,32 @@ config_set_defaults(void)
 	config.wallpaper_enabled = 0;
 	strncpy(config.wallpaper_path, "", CONFIG_MAX_STRING - 1);
 	
+	config.plumb_enabled = DEFAULT_PLUMB_ENABLED;
+	strncpy(config.plumb_send_path, DEFAULT_PLUMB_SEND_PATH, CONFIG_MAX_STRING - 1);
+	
 	config.menu_count = 6;
+	
+	init_menu_item(&config.menu_items[0]);
 	strncpy(config.menu_items[0].label, "New", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[0].command, "terminal", CONFIG_MAX_STRING - 1);
+	
+	init_menu_item(&config.menu_items[1]);
 	strncpy(config.menu_items[1].label, "Reshape", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[1].command, "reshape", CONFIG_MAX_STRING - 1);
+	
+	init_menu_item(&config.menu_items[2]);
 	strncpy(config.menu_items[2].label, "Move", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[2].command, "move", CONFIG_MAX_STRING - 1);
+	
+	init_menu_item(&config.menu_items[3]);
 	strncpy(config.menu_items[3].label, "Delete", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[3].command, "delete", CONFIG_MAX_STRING - 1);
+	
+	init_menu_item(&config.menu_items[4]);
 	strncpy(config.menu_items[4].label, "Hide", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[4].command, "hide", CONFIG_MAX_STRING - 1);
+	
+	init_menu_item(&config.menu_items[5]);
 	strncpy(config.menu_items[5].label, "Tile", CONFIG_MAX_STRING - 1);
 	strncpy(config.menu_items[5].command, "tile", CONFIG_MAX_STRING - 1);
 	

@@ -27,6 +27,135 @@ Menu b3menu = {
 	b3items,
 };
 
+static int current_submenu = -1;
+static char *submenu_items[CONFIG_MAX_SUBMENU_ITEMS + 1];
+static Menu submenu = {
+	submenu_items,
+};
+
+static void
+build_submenu(int menu_idx)
+{
+	int i;
+	
+	/* Clear submenu */
+	for (i = 0; i < CONFIG_MAX_SUBMENU_ITEMS + 1; i++)
+		submenu_items[i] = NULL;
+	
+	if (menu_idx >= 0 && menu_idx < config.menu_count && 
+	    config.menu_items[menu_idx].is_folder &&
+	    config.menu_items[menu_idx].submenu_items) {
+		
+		/* Add submenu items */
+		for (i = 0; i < config.menu_items[menu_idx].submenu_count && i < CONFIG_MAX_SUBMENU_ITEMS; i++) {
+			if (config.menu_items[menu_idx].submenu_items[i].label[0] != '\0') {
+				submenu_items[i] = config.menu_items[menu_idx].submenu_items[i].label;
+			}
+		}
+	}
+	
+	/* Null terminate */
+	submenu_items[i] = NULL;
+}
+
+int
+show_submenu_at(XButtonEvent *e, int menu_idx, ScreenInfo *s, int main_x, int main_y, int main_width, int item_height)
+{
+	int sub_dx = 0, sub_dy, n, i, wide;
+	int x, y;
+	
+	if (menu_idx < 0 || menu_idx >= config.menu_count || 
+	    !config.menu_items[menu_idx].is_folder ||
+	    !config.menu_items[menu_idx].submenu_items ||
+	    config.menu_items[menu_idx].submenu_count == 0)
+		return -1;
+	
+	build_submenu(menu_idx);
+	
+	/* Calculate submenu dimensions */
+	for (n = 0; submenu.item[n]; n++) {
+#ifdef XFT
+		wide = get_text_width(submenu.item[n]) + 4;
+#else
+		wide = XTextWidth(font, submenu.item[n], strlen(submenu.item[n])) + 4;
+#endif
+		if (wide > sub_dx)
+			sub_dx = wide;
+	}
+	
+	if (n == 0) return -1;
+	
+#ifdef XFT
+	sub_dy = n * (get_font_ascent() + get_font_descent() + 1);
+#else
+	sub_dy = n * (font->ascent + font->descent + 1);
+#endif
+	
+	/* Position submenu next to main menu */
+	x = main_x + main_width;
+	y = main_y + menu_idx * item_height;
+	
+	
+	/* Keep submenu on screen */
+	int xmax = DisplayWidth(dpy, s->num);
+	int ymax = DisplayHeight(dpy, s->num);
+	
+	if (x + sub_dx >= xmax)
+		x = main_x - sub_dx;
+	if (y + sub_dy >= ymax)
+		y = ymax - sub_dy;
+	if (y < 0) y = 0;
+	
+	/* Show submenu */
+	XMoveResizeWindow(dpy, s->submenuwin, x, y, sub_dx, sub_dy);
+	
+	/* Store absolute position for mouse detection */
+	s->submenu_x = x;
+	s->submenu_y = y;
+	s->submenu_w = sub_dx;
+	s->submenu_h = sub_dy;
+	XSelectInput(dpy, s->submenuwin, MenuMask);
+	
+	
+	XMapRaised(dpy, s->submenuwin);
+	current_submenu = menu_idx;
+	
+	return 0;
+}
+
+void
+hide_submenu_for(ScreenInfo *s)
+{
+	if (current_submenu >= 0) {
+		XUnmapWindow(dpy, s->submenuwin);
+		current_submenu = -1;
+	}
+}
+
+const char*
+get_submenu_command(int menu_idx, int sub_idx)
+{
+	if (menu_idx >= 0 && menu_idx < config.menu_count && 
+	    config.menu_items[menu_idx].is_folder &&
+	    config.menu_items[menu_idx].submenu_items &&
+	    sub_idx >= 0 && sub_idx < config.menu_items[menu_idx].submenu_count) {
+		return config.menu_items[menu_idx].submenu_items[sub_idx].command;
+	}
+	return NULL;
+}
+
+void
+build_submenu_for_rendering(int menu_idx)
+{
+	build_submenu(menu_idx);
+}
+
+char**
+get_submenu_items(void)
+{
+	return submenu_items;
+}
+
 void
 rebuild_menu(void)
 {
@@ -121,7 +250,21 @@ button(XButtonEvent * e)
 	case -1:		/* nothing */
 		break;
 	default:
-		if (n < config.menu_count) {
+		if (n >= 1000) {
+			/* Submenu item selected - decode parent folder and item index */
+			int encoded = n - 1000;
+			int parent_idx = encoded / 100;
+			int sub_idx = encoded % 100;
+			
+			if (parent_idx >= 0 && parent_idx < config.menu_count &&
+			    config.menu_items[parent_idx].is_folder &&
+			    sub_idx >= 0 && sub_idx < config.menu_items[parent_idx].submenu_count) {
+				const char *cmd = config.menu_items[parent_idx].submenu_items[sub_idx].command;
+				if (cmd && strlen(cmd) > 0) {
+					spawn(s, (char*)cmd);
+				}
+			}
+		} else if (n < config.menu_count) {
 			const char *cmd = config_get_menu_command(n);
 			if (cmd) {
 				if (strcmp(cmd, "terminal") == 0) {
@@ -141,8 +284,13 @@ button(XButtonEvent * e)
 				} else if (strcmp(cmd, "spaces") == 0) {
 					spaces_show(s);
 				} else {
-					/* Custom command */
-					spawn(s, (char*)cmd);
+					/* Custom command or folder */
+					if (config.menu_items[n].is_folder) {
+						/* This shouldn't happen in current design, but handle gracefully */
+						fprintf(stderr, "9wm: folder selected without submenu interaction\n");
+					} else {
+						spawn(s, (char*)cmd);
+					}
 				}
 			}
 		} else {

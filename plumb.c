@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -23,6 +24,7 @@
 /* Global plumber state */
 int plumb_enabled = 0;
 int plumb_fd = -1;
+time_t plumb_pending_until = 0;
 
 /* X11 selection atoms */
 static Atom xa_primary;
@@ -192,6 +194,9 @@ plumb_msg_send(PlumbMsg *m)
 	if (!m || !plumb_enabled || !m->data)
 		return 0;
 	
+	/* Mark that we're about to create a window via plumber */
+	plumb_pending_until = time(NULL) + 2; /* 2 seconds from now */
+	
 	/* Use the Plan 9 plumb command to send the message */
 	snprintf(cmd, sizeof(cmd), "echo '%s' | plumb -s '%s' -d '%s' -w '%s' -t '%s' -i", 
 	         m->data ? m->data : "",
@@ -201,6 +206,12 @@ plumb_msg_send(PlumbMsg *m)
 	         m->type ? m->type : "text");
 	
 	result = system(cmd);
+	
+	/* If command failed, reset immediately */
+	if (result != 0) {
+		plumb_pending_until = 0;
+	}
+	
 	return (result == 0);
 }
 
@@ -351,4 +362,42 @@ plumb_handle_selection(Client *c, int x, int y)
 	
 	/* For testing, always return 1 to consume the event */
 	return 1;
+}
+
+int
+plumb_window_pending(void)
+{
+	if (!plumb_enabled)
+		return 0;
+		
+	return (time(NULL) < plumb_pending_until);
+}
+
+int
+plumb_is_image_viewer(Client *c)
+{
+	/* Check if this is a known image viewer process based on class name */
+	if (!c || !c->class)
+		return 0;
+		
+	/* Common p9p plumber image viewers */
+	if (strcmp(c->class, "jpg") == 0 ||
+	    strcmp(c->class, "png") == 0 ||
+	    strcmp(c->class, "gif") == 0 ||
+	    strcmp(c->class, "bmp") == 0 ||
+	    strcmp(c->class, "webp") == 0 ||
+	    strcmp(c->class, "tiff") == 0) {
+		return 1;
+	}
+	
+	/* Other common image viewers */
+	if (strcmp(c->class, "feh") == 0 ||
+	    strcmp(c->class, "sxiv") == 0 ||
+	    strcmp(c->class, "imv") == 0 ||
+	    strcmp(c->class, "eog") == 0 ||
+	    strcmp(c->class, "gimp") == 0) {
+		return 1;
+	}
+	
+	return 0;
 }

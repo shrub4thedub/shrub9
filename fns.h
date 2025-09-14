@@ -40,7 +40,6 @@ void	keypress();
 int 	manage();
 void	scanwins();
 void	setshape();
-void	apply_window_rounding();
 void	withdraw();
 void	gravitate();
 void	cmapfocus();
@@ -71,6 +70,11 @@ void	unhide();
 void	unhidec();
 void	renamec();
 void	rebuild_menu();
+int	show_submenu_at(XButtonEvent *e, int menu_idx, ScreenInfo *s, int main_x, int main_y, int main_width, int item_height);
+void	hide_submenu_for(ScreenInfo *s);
+const char* get_submenu_command(int menu_idx, int sub_idx);
+void	build_submenu_for_rendering(int menu_idx);
+char**	get_submenu_items();
 void	tile_windows();
 
 /* client.c */
@@ -89,6 +93,11 @@ void	dump_clients();
 
 /* grab.c */
 int 	menuhit();
+#ifdef XFT
+int	get_text_width();
+int	get_font_ascent();
+int	get_font_descent();
+#endif
 Client	*selectwin();
 int 	sweep();
 int 	sweep_area();
