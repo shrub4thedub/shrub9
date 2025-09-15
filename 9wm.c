@@ -417,10 +417,11 @@ initscreen(ScreenInfo * s, int i)
 	s->inactive = s->white;
 	s->menu_bg = s->white;
 	s->menu_fg = s->black;
+	s->frame_color = s->black;
 #ifdef COLOR
 	{
 		Colormap cmap = DefaultColormap(dpy,s->num);
-		unsigned long active, inactive, menu_bg, menu_fg;
+		unsigned long active, inactive, menu_bg, menu_fg, frame_color;
 		
 		if (cmap != 0) {
 			if (activestr != NULL && getcolor(cmap, &active, activestr)) {
@@ -441,6 +442,13 @@ initscreen(ScreenInfo * s, int i)
 			}
 			if (config_parse_color(config.menu_fg_color, &menu_fg, cmap)) {
 				s->menu_fg = menu_fg;
+			}
+			
+			/* Set frame color from config */
+			if (config_parse_color(config.window_frame_color, &frame_color, cmap)) {
+				s->frame_color = frame_color;
+			} else {
+				s->frame_color = s->black;  /* Default to black */
 			}
 		}
 	}

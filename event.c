@@ -171,7 +171,7 @@ configurereq(XConfigureRequestEvent * e)
 			wc.y = c->y - BORDER;
 			wc.width = c->dx + 2 * (BORDER - 1);
 			wc.height = c->dy + 2 * (BORDER - 1);
-			wc.border_width = 1;
+			wc.border_width = config.window_frame_width;
 			wc.sibling = None;
 			wc.stack_mode = e->detail;
 			XConfigureWindow(dpy, c->parent, e->value_mask, &wc);

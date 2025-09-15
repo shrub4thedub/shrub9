@@ -136,6 +136,15 @@ config_load(const char *path)
 			} else {
 				config.border_width = border_width;
 			}
+		} else if (strcmp(key, "window_frame_width") == 0) {
+			int frame_width = atoi(value);
+			if (frame_width < 0) {
+				fprintf(stderr, "shrub9: config error at line %d: window_frame_width cannot be negative (got %d)\n", line_num, frame_width);
+			} else {
+				config.window_frame_width = frame_width;
+			}
+		} else if (strcmp(key, "window_frame_color") == 0) {
+			strncpy(config.window_frame_color, value, CONFIG_MAX_STRING - 1);
 		} else if (strcmp(key, "inset_width") == 0) {
 			int inset_width = atoi(value);
 			if (inset_width < 0) {
@@ -610,6 +619,8 @@ config_set_defaults(void)
 	strncpy(config.terminal_classes, DEFAULT_TERMINAL_CLASSES, CONFIG_MAX_STRING - 1);
 	
 	config.border_width = DEFAULT_BORDER_WIDTH;
+	config.window_frame_width = DEFAULT_WINDOW_FRAME_WIDTH;
+	strncpy(config.window_frame_color, DEFAULT_WINDOW_FRAME_COLOR, CONFIG_MAX_STRING - 1);
 	config.inset_width = DEFAULT_INSET_WIDTH;
 	
 	

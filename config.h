@@ -57,6 +57,8 @@ struct Config {
 	
 	/* Behavior */
 	int border_width;
+	int window_frame_width;
+	char window_frame_color[CONFIG_MAX_STRING];
 	int inset_width;
 	char terminal[CONFIG_MAX_STRING];
 	char cursor_style[CONFIG_MAX_STRING];
@@ -122,6 +124,8 @@ int is_terminal_class(const char *class_name);
 #define DEFAULT_TERMINAL "xterm"
 #define DEFAULT_CURSOR "modern"
 #define DEFAULT_BORDER_WIDTH 4
+#define DEFAULT_WINDOW_FRAME_WIDTH 0
+#define DEFAULT_WINDOW_FRAME_COLOR "#000000"
 #define DEFAULT_INSET_WIDTH 1
 #define DEFAULT_WORKSPACE_COUNT 4
 #define DEFAULT_WORKSPACE_MOD Mod4Mask

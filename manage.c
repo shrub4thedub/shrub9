@@ -134,7 +134,8 @@ manage(Client * c, int mapped)
 		
 		c->parent = XCreateSimpleWindow(dpy, c->screen->root,
 						c->x - BORDER, c->y - BORDER,
-						c->dx + 2 * (BORDER - 1), parent_height, 1, c->screen->black, c->screen->white);
+						c->dx + 2 * (BORDER - 1), parent_height, 
+						config.window_frame_width, c->screen->frame_color, c->screen->white);
 	}
 	XSelectInput(dpy, c->parent, SubstructureRedirectMask | SubstructureNotifyMask);
 	if (mapped)

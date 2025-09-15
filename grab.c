@@ -144,7 +144,7 @@ menuhit(XButtonEvent * e, Menu * m)
 	int tx, ty;
 	int submenu_active = -1, in_submenu = 0, submenu_cur = -1;
 	Time submenu_hide_time = 0;  /* When to hide submenu (0 = don't hide) */
-	const int SUBMENU_DELAY_MS = 250;  /* 250ms delay before hiding */
+	const int SUBMENU_DELAY_MS = 60;  /* 250ms delay before hiding */
 	ScreenInfo *s;
 
 #ifdef XFT
@@ -695,8 +695,8 @@ sweepcalc(Client * c, int x, int y)
 		sy = -1;
 	}
 
-	dx -= 2 * BORDER;
-	dy -= 2 * BORDER;
+	dx -= 2 * BORDER + 2 * config.window_frame_width;
+	dy -= 2 * BORDER + 2 * config.window_frame_width;
 	if (c->size.flags & PResizeInc) {
 		dx = c->min_dx + (dx - c->min_dx) / c->size.width_inc * c->size.width_inc;
 		dy = c->min_dy + (dy - c->min_dy) / c->size.height_inc * c->size.height_inc;
@@ -708,8 +708,8 @@ sweepcalc(Client * c, int x, int y)
 		if (dy > c->size.max_height)
 			dy = c->size.max_height;
 	}
-	c->dx = sx * (dx + 2 * BORDER);
-	c->dy = sy * (dy + 2 * BORDER);
+	c->dx = sx * (dx + 2 * BORDER + 2 * config.window_frame_width);
+	c->dy = sy * (dy + 2 * BORDER + 2 * config.window_frame_width);
 }
 
 void
@@ -727,10 +727,10 @@ drawbound(Client * c)
 	ScreenInfo *s;
 
 	s = c->screen;
-	x = c->x;
-	y = c->y;
-	dx = c->dx;
-	dy = c->dy;
+	x = c->x - config.window_frame_width;
+	y = c->y - config.window_frame_width;
+	dx = c->dx + 2 * config.window_frame_width;
+	dy = c->dy + 2 * config.window_frame_width;
 	if (dx < 0) {
 		x += dx;
 		dx = -dx;

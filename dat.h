@@ -123,6 +123,7 @@ struct ScreenInfo {
 	unsigned long	white;
 	unsigned long	active;
 	unsigned long	inactive;
+	unsigned long	frame_color;
 	unsigned long	menu_bg;
 	unsigned long	menu_fg;
 	int		min_cmaps;
